@@ -1,0 +1,31 @@
+## .NET
+bin/
+obj/
+*.user
+artifacts/
+
+## Local secrets and machine-specific settings
+appsettings.Development.json
+.env
+azd.env
+
+## azd
+.azure/
+
+## Data pipeline intermediates (large / regenerable).
+## The committed, ready-to-use corpus lives in data/ and is NOT ignored.
+data/raw/
+data/work/
+data/batch/
+
+## Evaluation output
+## results/ is deliberately NOT ignored: it holds the per-query data behind every number in the
+## report, and a claim whose evidence is not in the repository cannot be checked.
+
+## Editors
+.vs/
+.vscode/
+.idea/
+
+## Test output
+TestResults/

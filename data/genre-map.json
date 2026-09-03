@@ -1,0 +1,139 @@
+{
+  "$comment": [
+    "Goodreads tags are user-created shelves, so the raw tag list is mostly library management",
+    "noise: 'to-read', 'owned', 'kindle', 'read-in-2015'. This file curates the small subset that",
+    "actually denotes subject matter, and folds synonyms into a canonical genre.",
+    "",
+    "A book's primary genre is the canonical genre with the highest summed tag count for that book.",
+    "Genre matters here because it is the axis the corpus is striped along in Genre mode, and",
+    "because divergent vocabulary between stripes is exactly what breaks naive score merging."
+  ],
+  "genres": {
+    "Fantasy": [
+      "fantasy", "urban-fantasy", "high-fantasy", "epic-fantasy", "ya-fantasy", "magic",
+      "sword-and-sorcery", "fairy-tales", "fairytales", "mythology", "dragons", "witches",
+      "fantasy-fiction", "juvenile-fantasy", "adult-fantasy", "contemporary-fantasy"
+    ],
+    "Science Fiction": [
+      "science-fiction", "sci-fi", "scifi", "sf", "dystopia", "dystopian", "space-opera",
+      "cyberpunk", "speculative-fiction", "post-apocalyptic", "apocalyptic", "time-travel",
+      "space", "aliens", "robots", "steampunk", "dystopian-fiction", "science-fiction-fantasy"
+    ],
+    "Mystery": [
+      "mystery", "mysteries", "detective", "crime", "crime-fiction", "murder", "whodunit",
+      "cozy-mystery", "mystery-crime", "crime-mystery", "detective-fiction", "police-procedural",
+      "noir", "murder-mystery", "cozy-mysteries", "amateur-sleuth"
+    ],
+    "Thriller": [
+      "thriller", "thrillers", "suspense", "psychological-thriller", "espionage", "spy",
+      "suspense-thriller", "mystery-thriller", "mystery-suspense", "crime-thriller",
+      "legal-thriller", "political-thriller", "action-thriller", "psychological-suspense"
+    ],
+    "Horror": [
+      "horror", "ghosts", "vampires", "zombies", "gothic", "supernatural-horror", "paranormal",
+      "supernatural", "scary", "ghost-stories", "occult", "creepy", "monsters"
+    ],
+    "Romance": [
+      "romance", "contemporary-romance", "historical-romance", "paranormal-romance",
+      "romantic-suspense", "chick-lit", "love-story", "romantic", "erotica", "erotic-romance",
+      "new-adult", "regency", "regency-romance", "romance-novels", "love-stories"
+    ],
+    "Historical Fiction": [
+      "historical-fiction", "historical", "world-war-ii", "wwii", "ww2", "medieval",
+      "civil-war", "historical-fantasy", "victorian", "ancient-history-fiction",
+      "historical-novels", "period-fiction", "holocaust"
+    ],
+    "Literary Fiction": [
+      "literary-fiction", "literary", "classics", "classic", "literature", "modern-classics",
+      "american-literature", "british-literature", "classic-literature", "russian-literature",
+      "world-literature", "contemporary-literature", "novels", "classic-fiction", "canon"
+    ],
+    "Young Adult": [
+      "young-adult", "ya", "ya-fiction", "teen", "young-adult-fiction", "ya-books", "ya-lit",
+      "teen-fiction", "youth", "coming-of-age", "high-school", "young-adult-literature",
+      "teenagers", "ya-romance"
+    ],
+    "Children's": [
+      "children", "childrens", "children-s", "kids", "juvenile", "picture-books", "middle-grade",
+      "children-s-books", "children-s-literature", "children-s-lit", "childrens-books",
+      "kids-books", "chapter-books", "childrens-literature", "picture-book", "early-readers",
+      "juvenile-fiction", "bedtime-stories"
+    ],
+    "Graphic Novels": [
+      "graphic-novels", "graphic-novel", "comics", "manga", "comic-books", "comic",
+      "graphic-novels-comics", "bd", "sequential-art"
+    ],
+    "Biography & Memoir": [
+      "biography", "memoir", "autobiography", "biographies", "memoirs", "biography-memoir",
+      "auto-biography", "personal-narrative", "true-story", "life-stories"
+    ],
+    "History": [
+      "history", "american-history", "world-history", "military-history", "historical-nonfiction",
+      "european-history", "ancient-history", "war", "military", "politics", "political-science",
+      "social-history"
+    ],
+    "Science & Nature": [
+      "science", "physics", "biology", "astronomy", "evolution", "mathematics", "math",
+      "nature", "environment", "neuroscience", "medicine", "technology", "computer-science",
+      "popular-science", "natural-history", "ecology", "cosmology"
+    ],
+    "Business & Economics": [
+      "business", "economics", "leadership", "management", "finance", "entrepreneurship",
+      "money", "marketing", "investing", "personal-finance", "career", "startup", "work"
+    ],
+    "Self Help": [
+      "self-help", "personal-development", "productivity", "motivational", "self-improvement",
+      "psychology", "inspirational", "personal-growth", "health", "parenting", "self-development",
+      "wellness", "mindfulness", "habits"
+    ],
+    "Philosophy & Religion": [
+      "philosophy", "religion", "christian", "christianity", "theology", "spirituality", "faith",
+      "buddhism", "christian-fiction", "christian-living", "bible", "religious", "islam",
+      "spiritual", "ethics"
+    ],
+    "Poetry & Drama": [
+      "poetry", "plays", "poems", "theatre", "theater", "drama-plays", "shakespeare", "verse",
+      "poetry-collections", "screenplays"
+    ],
+    "Adventure & Travel": [
+      "adventure", "travel", "survival", "exploration", "action-adventure", "westerns", "western",
+      "sea-stories", "travel-writing", "outdoors", "sports"
+    ],
+    "Humor": [
+      "humor", "humour", "funny", "comedy", "satire", "humorous", "comic-fiction", "parody"
+    ]
+  },
+  "$stripeGroupsComment": [
+    "Used by StripeMode.Genre. Splitting along a thematic boundary makes the two stripes'",
+    "vocabulary and term-frequency distributions diverge, which is what makes their BM25 IDF",
+    "values incomparable. That is the failure this sample exists to measure, so the genre split",
+    "is the interesting configuration and the random split is the control.",
+    "Books with no allow-listed genre fall back to the deterministic hash split."
+  ],
+  "stripeGroups": {
+    "a": [
+      "Fantasy",
+      "Science Fiction",
+      "Horror",
+      "Mystery",
+      "Thriller",
+      "Young Adult",
+      "Children's",
+      "Graphic Novels"
+    ],
+    "b": [
+      "Literary Fiction",
+      "Romance",
+      "Historical Fiction",
+      "Biography & Memoir",
+      "Philosophy & Religion",
+      "History",
+      "Self Help",
+      "Humor",
+      "Business & Economics",
+      "Poetry & Drama",
+      "Science & Nature",
+      "Adventure & Travel"
+    ]
+  }
+}

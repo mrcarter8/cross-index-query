@@ -1,0 +1,34 @@
+name: Challenge a measurement
+description: Report a published number you believe is wrong
+title: "[measurement] "
+labels: ["measurement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The per-query data behind every published number is committed in `results/`. Disagreements
+        about method are more useful than disagreements about conclusions.
+  - type: input
+    id: claim
+    attributes:
+      label: Which claim
+      description: Quote the sentence or table row from docs/report.md.
+      placeholder: "Section 5: global-rrf loses 0.073 (p<0.0001)"
+    validations:
+      required: true
+  - type: textarea
+    id: disagreement
+    attributes:
+      label: What you think is wrong
+      description: The specific measurement, comparison, or inference you are challenging.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >
+        A recomputation from `results/`, a run of your own, or a description of the methodological
+        flaw. Include commands and configuration if you re-ran anything.
+    validations:
+      required: false

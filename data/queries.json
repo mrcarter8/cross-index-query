@@ -1,0 +1,704 @@
+[
+  {
+    "id": "q001",
+    "text": "dragons and ancient magic",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q002",
+    "text": "a young wizard learning to control his powers at a school of magic",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q003",
+    "text": "epic fantasy quest to destroy an artifact",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q004",
+    "text": "vampires",
+    "shape": "Head",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q005",
+    "text": "haunted house that torments the family living in it",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q006",
+    "text": "generation starship colonists who forget they are on a ship",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q007",
+    "text": "artificial intelligence becomes self aware",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q008",
+    "text": "hard science fiction about terraforming Mars",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q009",
+    "text": "cyberpunk hacker corporate dystopia",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q010",
+    "text": "a locked room murder that seems impossible to have committed",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q011",
+    "text": "detective investigating a serial killer",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q012",
+    "text": "espionage thriller cold war spy",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q013",
+    "text": "teenagers forced to compete in a deadly televised game",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q014",
+    "text": "picture book about a bear",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q015",
+    "text": "graphic novel superhero origin",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q016",
+    "text": "zombie apocalypse survival",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q017",
+    "text": "time travel paradox",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q018",
+    "text": "a girl who discovers she is the last of a magical bloodline",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q019",
+    "text": "dystopian society divided into rigid factions",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q020",
+    "text": "supernatural creatures hidden among ordinary people",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+
+  {
+    "id": "q021",
+    "text": "Victorian England social class and marriage",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q022",
+    "text": "memoir of growing up in poverty",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q023",
+    "text": "biography of a president",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q024",
+    "text": "behavioral economics and irrational decision making",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q025",
+    "text": "habits productivity and personal effectiveness",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q026",
+    "text": "poetry collection about grief",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q027",
+    "text": "existentialist philosophy and the meaning of life",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q028",
+    "text": "evolutionary biology explained for general readers",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q029",
+    "text": "the history of the Roman empire",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q030",
+    "text": "a novel narrated by an unreliable narrator in a decaying southern town",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q031",
+    "text": "Regency romance with a reluctant duke",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q032",
+    "text": "cookbook",
+    "shape": "Head",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q033",
+    "text": "travel writing about walking across a country",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q034",
+    "text": "startup founder building a company from nothing",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q035",
+    "text": "a marriage falling apart told from both perspectives",
+    "shape": "Tail",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q036",
+    "text": "essays on race in America",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q037",
+    "text": "spiritual awakening and mindfulness practice",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q038",
+    "text": "immigrant family adjusting to a new country",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q039",
+    "text": "art history and the Renaissance painters",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q040",
+    "text": "investing personal finance wealth",
+    "shape": "Torso",
+    "span": "StripeLocal",
+    "intent": "Lexical"
+  },
+
+  {
+    "id": "q041",
+    "text": "love",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q042",
+    "text": "war",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q043",
+    "text": "family",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q044",
+    "text": "death",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q045",
+    "text": "friendship",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q046",
+    "text": "coming of age story about a teenager finding their identity",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q047",
+    "text": "a story about losing someone you love and learning to go on",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q048",
+    "text": "World War II",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q049",
+    "text": "survival against impossible odds in a hostile environment",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q050",
+    "text": "revenge",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q051",
+    "text": "betrayal by someone you trusted completely",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q052",
+    "text": "an orphan raised by strangers who discovers the truth about their parents",
+    "shape": "Tail",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q053",
+    "text": "political corruption and the abuse of power",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q054",
+    "text": "isolation and loneliness",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q055",
+    "text": "mother and daughter relationship across generations",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q056",
+    "text": "murder",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q057",
+    "text": "a journey across a ruined landscape",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q058",
+    "text": "religion faith and doubt",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q059",
+    "text": "London",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q060",
+    "text": "Paris",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q061",
+    "text": "the sea and the people who make their living on it",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q062",
+    "text": "a small town where everyone is hiding something",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q063",
+    "text": "identity and what makes someone who they are",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q064",
+    "text": "father and son",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q065",
+    "text": "escape from captivity",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q066",
+    "text": "a secret that destroys a community when it comes out",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q067",
+    "text": "the American South",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q068",
+    "text": "grief after the death of a child",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q069",
+    "text": "an outsider who does not fit in anywhere",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q070",
+    "text": "school",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q071",
+    "text": "obsession that ruins a life",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q072",
+    "text": "slavery and its aftermath",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q073",
+    "text": "the Holocaust",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q074",
+    "text": "a woman who defies the expectations of her time",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q075",
+    "text": "addiction and recovery",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q076",
+    "text": "New York City",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q077",
+    "text": "an unlikely friendship between two very different people",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q078",
+    "text": "climate change and environmental collapse",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q079",
+    "text": "memory and how unreliable it can be",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q080",
+    "text": "a doctor confronting the limits of medicine",
+    "shape": "Tail",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q081",
+    "text": "immortality and the cost of living forever",
+    "shape": "Tail",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q082",
+    "text": "twins separated at birth",
+    "shape": "Tail",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q083",
+    "text": "a letter that arrives decades too late",
+    "shape": "Tail",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q084",
+    "text": "music and the people who devote their lives to it",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q085",
+    "text": "a trial that divides a town",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q086",
+    "text": "forbidden love across a social divide",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q087",
+    "text": "an old man looking back on his life",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q088",
+    "text": "letters and diaries as a way of telling a story",
+    "shape": "Tail",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q089",
+    "text": "the price of ambition",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q090",
+    "text": "a con artist whose scheme goes wrong",
+    "shape": "Tail",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q091",
+    "text": "prison",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q092",
+    "text": "language and the way words shape thought",
+    "shape": "Tail",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q093",
+    "text": "a house that holds a family's history",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q094",
+    "text": "surveillance and the loss of privacy",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Mixed"
+  },
+  {
+    "id": "q095",
+    "text": "sisters",
+    "shape": "Head",
+    "span": "CrossStripe",
+    "intent": "Lexical"
+  },
+  {
+    "id": "q096",
+    "text": "a mentor who turns out to be wrong about everything",
+    "shape": "Tail",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q097",
+    "text": "winter cold and isolation in a remote place",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q098",
+    "text": "money and what people will do for it",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q099",
+    "text": "a rebellion against an unjust authority",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  },
+  {
+    "id": "q100",
+    "text": "the moment everything changed",
+    "shape": "Torso",
+    "span": "CrossStripe",
+    "intent": "Conceptual"
+  }
+]

@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: cross-index-query
+metadata:
+  template: cross-index-query@1.0.0
+
+# There is no hosted service here. The sample is a pair of console applications you run locally
+# against the search service azd provisions, so `azd up` provisions infrastructure and stops.
+infra:
+  provider: bicep
+  path: infra
+  module: main
+
+hooks:
+  postprovision:
+    windows:
+      shell: pwsh
+      run: ./scripts/write-settings.ps1
+      continueOnError: false
+      interactive: false
+    posix:
+      shell: sh
+      run: ./scripts/write-settings.sh
+      continueOnError: false
+      interactive: false

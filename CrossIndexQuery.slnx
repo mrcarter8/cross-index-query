@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CrossIndexQuery.Cli/CrossIndexQuery.Cli.csproj" />
+    <Project Path="src/CrossIndexQuery.Core/CrossIndexQuery.Core.csproj" />
+    <Project Path="src/CrossIndexQuery.DataPrep/CrossIndexQuery.DataPrep.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CrossIndexQuery.Tests/CrossIndexQuery.Tests.csproj" />
+  </Folder>
+</Solution>

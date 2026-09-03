@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>cross-index-dataprep</AssemblyName>
+    <RootNamespace>CrossIndexQuery.DataPrep</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="CsvHelper" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CrossIndexQuery.Core\CrossIndexQuery.Core.csproj" />
+  </ItemGroup>
+
+</Project>

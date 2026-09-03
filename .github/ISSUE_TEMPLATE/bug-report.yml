@@ -1,0 +1,50 @@
+name: Bug report
+description: Something in the sample does not work
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands, and any CIQ_ environment variables you had set.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: dotnet
+    attributes:
+      label: .NET SDK version
+      description: Output of `dotnet --version`.
+      placeholder: "10.0.400"
+    validations:
+      required: true
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Search service tier
+      options:
+        - Serverless
+        - Basic
+        - Standard (S1/S2/S3)
+        - Other or not sure
+    validations:
+      required: false
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Relevant console output. `doctor` output is especially useful.
+      render: shell

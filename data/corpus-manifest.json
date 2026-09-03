@@ -1,0 +1,31 @@
+{
+  "generatedUtc": "2026-09-01T16:48:42.1166459+00:00",
+  "documentCount": 10000,
+  "embeddingModel": "text-embedding-3-small",
+  "embeddingDimensions": 1536,
+  "blurbModel": "gpt-5.4-batch",
+  "sourceDataset": "goodbooks-10k",
+  "genreCounts": {
+    "Fantasy": 1166,
+    "Literary Fiction": 1146,
+    "Romance": 1090,
+    "Mystery": 806,
+    "Young Adult": 727,
+    "Children\u0027s": 650,
+    "Science Fiction": 615,
+    "Historical Fiction": 601,
+    "Horror": 483,
+    "Thriller": 450,
+    "Biography \u0026 Memoir": 427,
+    "Graphic Novels": 385,
+    "Philosophy \u0026 Religion": 380,
+    "History": 236,
+    "Self Help": 218,
+    "Humor": 172,
+    "Business \u0026 Economics": 125,
+    "Poetry \u0026 Drama": 111,
+    "Science \u0026 Nature": 105,
+    "Adventure \u0026 Travel": 87
+  },
+  "vectorEncoding": "int8-base64"
+}
