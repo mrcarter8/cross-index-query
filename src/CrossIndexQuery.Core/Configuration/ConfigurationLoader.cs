@@ -8,8 +8,9 @@ namespace CrossIndexQuery.Core.Configuration;
 /// <remarks>
 /// Precedence, lowest to highest: <c>appsettings.json</c> (committed, placeholders only),
 /// <c>appsettings.Development.json</c> (git-ignored, your service), user secrets, then
-/// environment variables prefixed <c>CIQ_</c>. The environment layer is what <c>azd</c> and CI
-/// populate, so an automated run never needs a file on disk.
+/// environment variables prefixed <c>CIQ_</c> — which a git-ignored <c>.env</c> file at the
+/// repository root populates if one exists. The environment layer is what <c>azd</c>, CI and
+/// <c>.env</c> all feed, so an automated run never needs a file on disk.
 /// </remarks>
 public static class ConfigurationLoader
 {
@@ -24,6 +25,11 @@ public static class ConfigurationLoader
     public static IConfigurationRoot BuildConfiguration(string? basePath = null)
     {
         basePath ??= FindSettingsDirectory();
+
+        // Loaded into the process environment first, so it feeds the environment layer below rather
+        // than forming a layer of its own. Values already exported in the shell win, which keeps a
+        // one-off override working.
+        DotEnvFile.Load(Path.Combine(basePath, DotEnvFile.FileName));
 
         return new ConfigurationBuilder()
             .SetBasePath(basePath)

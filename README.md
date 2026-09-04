@@ -466,20 +466,25 @@ Raw per-query data for every published number is in [`results/`](results).
 
 Prerequisites: .NET 10 SDK, an Azure AI Search service, an Azure OpenAI deployment of
 `text-embedding-3-small`, and `az login`. Authentication is `DefaultAzureCredential` throughout —
-there are no API keys in this repository and none should be added.
+no API key is needed to run anything in this study.
 
 ```powershell
-Copy-Item appsettings.Development.json.example appsettings.Development.json
-#   ...then edit the two endpoints
+Copy-Item .env.example .env
+#   ...then fill in the two endpoints. Every other setting has a working default.
 
 dotnet build                                                        # 0 warnings
-dotnet test                                                         # 48/48
+dotnet test                                                         # 88/88
 
 dotnet run --project src/CrossIndexQuery.Cli -- doctor              # verify the environment
 dotnet run --project src/CrossIndexQuery.Cli -- init                # build the three indexes
 dotnet run --project src/CrossIndexQuery.Cli -- query "love" --explain
 dotnet run --project src/CrossIndexQuery.Cli -- evaluate            # reproduce the matrix
 ```
+
+`.env` is git-ignored and feeds the environment layer, so anything in it overrides the JSON
+settings files — and a variable exported in your shell still overrides the file, so one-off runs
+work as expected. [`.env.example`](.env.example) documents every setting, including which ones you
+only need if you are provisioning resources rather than pointing at an existing service.
 
 `query --explain` is the teaching surface — it prints what each index returned, what it scored, and
 how the merge transformed it. The `love` example in Part 2 is that command's output.
@@ -492,6 +497,22 @@ $env:CIQ_Corpus__StripeMode = 'Temporal'    # split to scale - imbalanced, drift
 $env:CIQ_Corpus__StripeYearCut = '2013'     #   ...at 9.4:1 imbalance
 $env:CIQ_Corpus__StripeMode = 'Random'      # the control - no divergence, no imbalance
 ```
+
+### The one optional key
+
+Everything above is key-free. Pattern 4 has a single opt-in extra: attaching an LLM to the
+knowledge base so agentic retrieval can **decompose a query into subqueries**. Leave it unset and
+the service runs at `minimal` reasoning effort, where no LLM participates at all.
+
+```
+CIQ_Search__KnowledgeBaseModelDeployment=gpt-5-nano
+CIQ_Search__KnowledgeBaseModelApiKey=<key>
+```
+
+The key is needed only on **serverless**. Role-based access is the documented recommendation, but
+it requires the search service to hold `Cognitive Services User` on the Foundry resource through a
+managed identity — and managed identity requires the **Basic tier or higher**. On Basic or above,
+assign the role and leave the key empty.
 
 ## What's here
 

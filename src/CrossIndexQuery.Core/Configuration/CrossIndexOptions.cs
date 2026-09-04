@@ -73,6 +73,74 @@ public sealed class SearchServiceOptions
     /// <summary>Vector profile name, identical across all three indexes.</summary>
     public string VectorProfileName { get; set; } = "books-vector-profile";
 
+    /// <summary>
+    /// Chat deployment the knowledge base uses for LLM query planning.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Empty by default, and the sample works without it. Leaving it empty forces the retrieval
+    /// engine to <c>minimal</c> reasoning effort, where the documentation is explicit that there is
+    /// "no LLM for intelligent query planning or answer synthesis" — the query goes straight to
+    /// search and ordering comes from the semantic ranker. Everything this study has measured of
+    /// agentic retrieval so far was measured in that state.
+    /// </para>
+    /// <para>
+    /// Set it to a supported chat deployment to attach a model and unlock <c>low</c> and
+    /// <c>medium</c> reasoning effort, which is where the query actually gets decomposed into
+    /// subqueries. That is the capability most likely to help short, low-context queries — the
+    /// "one company name and nothing else" case that motivates cross-index relevance work in the
+    /// first place — and it is the only option in this study's four-way framing that remains
+    /// unmeasured.
+    /// </para>
+    /// <para>
+    /// Supported models at the time of writing: <c>gpt-5</c>, <c>gpt-5-mini</c>, <c>gpt-5-nano</c>,
+    /// <c>gpt-5.1</c>, <c>gpt-5.2</c>, <c>gpt-5.4</c>, <c>gpt-5.4-mini</c>, <c>gpt-5.4-nano</c>,
+    /// <c>gpt-5.5</c> and the <c>gpt-5.6</c> family. A batch deployment will not do — query planning
+    /// is interactive, so the deployment must be a standard one.
+    /// </para>
+    /// </remarks>
+    public string KnowledgeBaseModelDeployment { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Model name behind <see cref="KnowledgeBaseModelDeployment"/>.
+    /// </summary>
+    /// <remarks>
+    /// The service validates the model, not the deployment name, against its supported list. They
+    /// are usually the same string, so this defaults to the deployment when left empty.
+    /// </remarks>
+    public string KnowledgeBaseModelName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Foundry endpoint hosting the query-planning deployment.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to the embedding endpoint, since one Foundry resource normally hosts both.
+    /// </remarks>
+    public string KnowledgeBaseModelEndpoint { get; set; } = string.Empty;
+
+    /// <summary>
+    /// API key for the query-planning model.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The one place in this sample where a key may be unavoidable. Everything else authenticates
+    /// with <c>DefaultAzureCredential</c>, and role-based access is the documented recommendation
+    /// here too — but it requires the search service to have a managed identity holding
+    /// <b>Cognitive Services User</b> on the Foundry resource, and managed identity needs the
+    /// <b>Basic tier or higher</b>. A serverless search service, which is what this sample
+    /// provisions, cannot satisfy that.
+    /// </para>
+    /// <para>
+    /// So on serverless the key is the only route to query planning. On Basic or above, leave this
+    /// empty, assign the role, and no secret is needed anywhere in the sample.
+    /// </para>
+    /// </remarks>
+    public string? KnowledgeBaseModelApiKey { get; set; }
+
+    /// <summary>Whether a query-planning model has been configured.</summary>
+    public bool HasKnowledgeBaseModel =>
+        !string.IsNullOrWhiteSpace(KnowledgeBaseModelDeployment);
+
     /// <summary>All stripe index names, in stable order.</summary>
     public IReadOnlyList<string> StripeIndexes => [StripeAIndex, StripeBIndex];
 }

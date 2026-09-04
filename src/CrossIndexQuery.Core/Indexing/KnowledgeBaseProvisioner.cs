@@ -73,12 +73,67 @@ public sealed class KnowledgeBaseProvisioner(SearchClientFactory factory, CrossI
             Description = "The whole book corpus, spanning every stripe index.",
         };
 
+        // Attaching a model is what unlocks `low` and `medium` reasoning effort, and with them the
+        // query planning that decomposes one query into subqueries. Without it the service is
+        // pinned to `minimal`, where no LLM participates at all and ordering comes from the
+        // semantic ranker. The sample is fully functional either way, so this stays optional.
+        SearchServiceOptions search = options.Search;
+        if (search.HasKnowledgeBaseModel)
+        {
+            string endpoint = string.IsNullOrWhiteSpace(search.KnowledgeBaseModelEndpoint)
+                ? options.Embedding.Endpoint
+                : search.KnowledgeBaseModelEndpoint;
+
+            if (string.IsNullOrWhiteSpace(endpoint))
+            {
+                throw new InvalidOperationException(
+                    "A knowledge base model deployment was configured but no endpoint could be "
+                    + "resolved. Set Search:KnowledgeBaseModelEndpoint or Embedding:Endpoint.");
+            }
+
+            var parameters = new AzureOpenAIVectorizerParameters
+            {
+                ResourceUri = new Uri(endpoint),
+                DeploymentName = search.KnowledgeBaseModelDeployment,
+
+                // The service validates the model against its supported list, not the deployment
+                // name. They are usually the same string, which is why one can stand in for the
+                // other, but a deployment named for its purpose rather than its model would fail
+                // validation with a confusing message if this were left to default.
+                ModelName = string.IsNullOrWhiteSpace(search.KnowledgeBaseModelName)
+                    ? search.KnowledgeBaseModelDeployment
+                    : search.KnowledgeBaseModelName,
+            };
+
+            if (!string.IsNullOrWhiteSpace(search.KnowledgeBaseModelApiKey))
+            {
+                parameters.ApiKey = search.KnowledgeBaseModelApiKey;
+            }
+
+            knowledgeBase.Models.Add(new KnowledgeBaseAzureOpenAIModel(parameters));
+
+            Console.WriteLine(
+                $"  query planning model: {search.KnowledgeBaseModelDeployment} "
+                + $"({(string.IsNullOrWhiteSpace(search.KnowledgeBaseModelApiKey)
+                    ? "managed identity"
+                    : "api key")})");
+        }
+
         await client.CreateOrUpdateKnowledgeBaseAsync(
             knowledgeBase, onlyIfUnchanged: false, cancellationToken).ConfigureAwait(false);
 
         Console.WriteLine(
             $"  knowledge base ready: {options.Search.KnowledgeBaseName} "
             + $"({references.Count} sources)");
+
+        if (!search.HasKnowledgeBaseModel)
+        {
+            // Stated rather than left silent, because the difference is invisible until a request
+            // asking for anything above minimal effort is rejected.
+            Console.WriteLine(
+                "  no query planning model configured — agentic retrieval will run at minimal "
+                + "reasoning effort, with no LLM in the loop.");
+        }
     }
 
     /// <summary>Reports whether the knowledge base exists, without enumerating.</summary>
