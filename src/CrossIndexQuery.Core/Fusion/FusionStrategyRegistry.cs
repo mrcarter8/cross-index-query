@@ -116,6 +116,10 @@ public sealed class FusionStrategyRegistry
 
             // Needs the same sidecar, but uses it to rebuild the score rather than to rescale it.
             strategies.Add(new GlobalBm25Fusion(statistics));
+
+            // The control that makes the previous line falsifiable: identical arithmetic and
+            // identical tokenization, differing only in whose statistics are used.
+            strategies.Add(new LocalBm25Fusion(statistics));
         }
 
         // Pattern 2: a model outside the search service scores every candidate. Registered last

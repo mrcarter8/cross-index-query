@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Azure;
 using CrossIndexQuery.Core.Clients;
 using CrossIndexQuery.Core.Configuration;
 using CrossIndexQuery.Core.Fusion;
@@ -45,6 +46,28 @@ public sealed class EvaluationHarness(
     public const string SingleIndexBaseline = "single-index";
 
     /// <summary>
+    /// Strategy name for the single index rescored with the same client-side scorer.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The control that makes the study's largest claim honest. <c>global-bm25</c> beats the single
+    /// index by a wide margin, but it changes two things at once: it repairs the cross-index
+    /// statistics, and it replaces the service's scoring with a client-side BM25 over the text the
+    /// caller already has. The second change has nothing to do with striping and is available to
+    /// anyone, split corpus or not.
+    /// </para>
+    /// <para>
+    /// This row applies exactly that client-side scorer to the single index's own results. Because
+    /// one index holding the whole corpus <em>is</em> the corpus, its statistics are the global
+    /// statistics, so this is <c>global-bm25</c> with the split removed and nothing else changed.
+    /// Comparing the striped rescore against this row — rather than against the raw single index —
+    /// is the only comparison in the study where the split is genuinely the sole difference, and it
+    /// is therefore the only one that can answer "what does striping cost" without confounding.
+    /// </para>
+    /// </remarks>
+    public const string SingleIndexRescored = "single-index-rescored";
+
+    /// <summary>
     /// One query and every document any approach returned for it.
     /// </summary>
     /// <remarks>
@@ -75,6 +98,11 @@ public sealed class EvaluationHarness(
 
         EvaluationOptions settings = options.Evaluation;
         List<EvaluationRecord> records = [];
+
+        // Strategies that turned out to depend on a resource this service does not have. Recorded
+        // so the failure is reported once rather than once per query, and so the run continues
+        // producing the numbers it can still produce.
+        HashSet<string> unavailable = new(StringComparer.Ordinal);
 
         // Accumulated across every mode, because the judge scores a (query, document) pair once
         // regardless of which mode surfaced it. Insertion-ordered so the pool file is stable.
@@ -118,6 +146,7 @@ public sealed class EvaluationHarness(
                     QueryVector = vector,
                     Size = settings.PerStripeK,
                     UseSemanticRanker = useSemanticRanker,
+                    ExhaustiveVectorSearch = settings.ExhaustiveVectorSearch,
                 };
 
                 var request = oracleRequest with { Size = perStripe };
@@ -180,11 +209,53 @@ public sealed class EvaluationHarness(
                     entry.Ids.Add(id);
                 }
 
+                // The single index put through the same client-side scorer as the striped arm, so
+                // the two differ only in whether the corpus was split. Skipped when no statistics
+                // file is loaded, which is the same condition that removes global-bm25 itself.
+                EvaluationRecord? rescored = await EvaluateRescoredBaselineAsync(
+                    query, mode, oracle, truth, context, cancellationToken).ConfigureAwait(false);
+
+                if (rescored is not null)
+                {
+                    records.Add(rescored);
+
+                    foreach (string id in rescored.ReturnedIds)
+                    {
+                        entry.Ids.Add(id);
+                    }
+                }
+
                 foreach (IFusionStrategy strategy in strategies)
                 {
-                    EvaluationRecord? record = await EvaluateAsync(
-                        query, mode, strategy, stripes, truth, context, cancellationToken)
-                        .ConfigureAwait(false);
+                    if (unavailable.Contains(strategy.Name))
+                    {
+                        continue;
+                    }
+
+                    EvaluationRecord? record;
+
+                    try
+                    {
+                        record = await EvaluateAsync(
+                            query, mode, strategy, stripes, truth, context, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (RequestFailedException ex) when (ex.Status is 404 or 403)
+                    {
+                        // A strategy that depends on a resource nobody provisioned — a knowledge
+                        // base, a deployment — must not take a hundred-query run down with it. The
+                        // rest of the catalog is unaffected and its numbers are still worth having,
+                        // so the strategy is dropped for this run with one message rather than
+                        // repeating the failure on every remaining query.
+                        unavailable.Add(strategy.Name);
+
+                        Console.Error.WriteLine(
+                            $"Skipping '{strategy.Name}': {ex.Status} from the service. "
+                            + "Every other strategy continues. "
+                            + $"({ex.Message.Split('\n')[0].Trim()})");
+
+                        continue;
+                    }
 
                     if (record is not null)
                     {
@@ -257,7 +328,7 @@ public sealed class EvaluationHarness(
             Recall = RankingMetrics.RecallAtK(candidate, truth, context.TopK),
             Jaccard = RankingMetrics.JaccardAtK(candidate, truth, context.TopK),
             KendallTau = RankingMetrics.KendallTau(candidate, truth),
-            RankBiasedOverlap = RankingMetrics.RankBiasedOverlap(candidate, truth),
+            RankBiasedOverlap = RankingMetrics.RankBiasedOverlap(candidate, truth, context.TopK),
 
             // The retrieval is shared by every strategy, so the extra requests a strategy makes on
             // its own account are what actually distinguish them on cost — except for one that did
@@ -273,6 +344,79 @@ public sealed class EvaluationHarness(
                 ? fusionTime.TotalMilliseconds
                 : stripes.Elapsed.TotalMilliseconds + fusionTime.TotalMilliseconds,
             StripeContribution = contribution,
+            ReturnedIds = candidate,
+        };
+    }
+
+    /// <summary>
+    /// Applies the striped arm's client-side scorer to the single index's own results.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Reuses the registered <c>global-bm25</c> instance rather than constructing a second one, so
+    /// the two arms cannot drift apart through a constant being changed in one place. If that
+    /// strategy is absent — which happens when no statistics file is loaded — the row is simply not
+    /// produced, matching the striped side's behaviour.
+    /// </para>
+    /// <para>
+    /// The fidelity columns are left at their definitional values. This row returns a different
+    /// ordering from the raw single index, so its fidelity <em>against</em> the raw single index is
+    /// genuinely below 1.0, but reporting that would invite it to be read as striping damage when no
+    /// striping is involved. Its only meaningful column is judged relevance, which is the column
+    /// the control exists to supply.
+    /// </para>
+    /// </remarks>
+    private async Task<EvaluationRecord?> EvaluateRescoredBaselineAsync(
+        EvaluationQuery query,
+        RetrievalMode mode,
+        FanOutResult oracle,
+        IReadOnlyList<string> truth,
+        FusionContext context,
+        CancellationToken cancellationToken)
+    {
+        IFusionStrategy? rescorer = registry.For(mode)
+            .FirstOrDefault(s => s.Name == GlobalBm25Fusion.StrategyName);
+
+        if (rescorer is null)
+        {
+            return null;
+        }
+
+        IReadOnlyList<FusedDocument> fused;
+        try
+        {
+            fused = await rescorer.FuseAsync(oracle, context, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+
+        IReadOnlyList<string> candidate = [.. fused.Select(d => d.Id)];
+
+        return new EvaluationRecord
+        {
+            QueryId = query.Id,
+            QueryText = query.Text,
+            Shape = query.Shape,
+            Span = query.Span,
+            Intent = query.Intent,
+            Mode = mode.ToString(),
+            Strategy = SingleIndexRescored,
+            Ndcg = RankingMetrics.NormalizedDiscountedCumulativeGain(candidate, truth, context.TopK),
+            Recall = RankingMetrics.RecallAtK(candidate, truth, context.TopK),
+            Jaccard = RankingMetrics.JaccardAtK(candidate, truth, context.TopK),
+            KendallTau = RankingMetrics.KendallTau(candidate, truth),
+            RankBiasedOverlap = RankingMetrics.RankBiasedOverlap(candidate, truth, context.TopK),
+
+            // One index, one query, and arithmetic on results already paid for.
+            QueryCount = oracle.QueryCount,
+            ComputeUnits = oracle.ComputeUnits,
+            LatencyMs = oracle.Elapsed.TotalMilliseconds,
+            StripeContribution = new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                [options.Search.OracleIndex] = candidate.Count,
+            },
             ReturnedIds = candidate,
         };
     }
@@ -308,6 +452,7 @@ public sealed class EvaluationHarness(
                 QueryVector = vector,
                 Size = options.Evaluation.PerStripeK,
                 UseSemanticRanker = useSemanticRanker,
+                ExhaustiveVectorSearch = options.Evaluation.ExhaustiveVectorSearch,
             };
 
             await retriever.SearchOracleAsync(request, cancellationToken).ConfigureAwait(false);

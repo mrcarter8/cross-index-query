@@ -35,8 +35,11 @@ namespace CrossIndexQuery.Core.Fusion;
 /// least locally meaningful.
 /// </para>
 /// </remarks>
-public sealed class ExternalRerankFusion : IFusionStrategy, IDisposable
+public sealed class ExternalRerankFusion : IFusionStrategy
 {
+    /// <summary>Attempts per candidate before giving up and reporting it ungradable.</summary>
+    private const int MaxAttempts = 4;
+
     private const string SystemPrompt =
         """
         Rate how well the book answers the search query.
@@ -101,6 +104,7 @@ public sealed class ExternalRerankFusion : IFusionStrategy, IDisposable
 
         var grades = new int[candidates.Count];
         using var throttle = new SemaphoreSlim(_maxConcurrency);
+        int ungradable = 0;
 
         await Task.WhenAll(candidates.Select(async (candidate, index) =>
         {
@@ -109,6 +113,11 @@ public sealed class ExternalRerankFusion : IFusionStrategy, IDisposable
             {
                 grades[index] = await GradeAsync(fanOut.Query, candidate.Document, cancellationToken)
                     .ConfigureAwait(false);
+
+                if (grades[index] < 0)
+                {
+                    Interlocked.Increment(ref ungradable);
+                }
             }
             finally
             {
@@ -116,11 +125,22 @@ public sealed class ExternalRerankFusion : IFusionStrategy, IDisposable
             }
         })).ConfigureAwait(false);
 
+        if (ungradable > 0)
+        {
+            // Surfaced rather than absorbed. A run where the model never answered is a degraded
+            // measurement, and reporting it as poor relevance would be indistinguishable from the
+            // model having judged those documents irrelevant.
+            Console.Error.WriteLine(
+                $"  [{Name}] {ungradable}/{candidates.Count} candidates could not be graded for "
+                + $"'{fanOut.Query}'; treated as irrelevant, so this result is understated.");
+        }
+
         List<FusedDocument> scored = [];
 
         for (int i = 0; i < candidates.Count; i++)
         {
             ScoredDocument candidate = candidates[i];
+            int grade = Math.Max(grades[i], 0);
 
             // The grade dominates; the retrieval score only separates documents the model graded
             // equally. Scaling it down keeps it strictly subordinate rather than competing.
@@ -128,8 +148,10 @@ public sealed class ExternalRerankFusion : IFusionStrategy, IDisposable
 
             scored.Add(new FusedDocument(
                 candidate,
-                grades[i] + tieBreak,
-                $"external grade {grades[i]}/3 (from {candidate.SourceIndex})"));
+                grade + tieBreak,
+                grades[i] < 0
+                    ? $"ungraded (from {candidate.SourceIndex})"
+                    : $"external grade {grade}/3 (from {candidate.SourceIndex})"));
         }
 
         return FusionHelpers.RankAndTruncate(scored, context.TopK);
@@ -151,50 +173,95 @@ public sealed class ExternalRerankFusion : IFusionStrategy, IDisposable
         }
     }
 
+    /// <summary>
+    /// Grades one candidate, retrying transient failures.
+    /// </summary>
+    /// <returns>A grade of 0-3, or -1 when the model could not be made to answer.</returns>
+    /// <remarks>
+    /// Throttling is the expected condition here, not the exceptional one: a full evaluation issues
+    /// one completion per candidate per query per mode against a single deployment. Converting a 429
+    /// into a grade of zero would publish "the service was busy" as "this document is irrelevant",
+    /// which is the failure mode this whole study exists to avoid — a plausible number with nothing
+    /// behind it.
+    /// </remarks>
     private async Task<int> GradeAsync(
         string query,
         BookDocument document,
         CancellationToken cancellationToken)
     {
+        string authors = document.Authors.Length > 0 ? string.Join(", ", document.Authors) : "unknown";
+
         var user =
             $"""
              Query: {query}
 
              Title: {document.Title}
-             Author(s): {string.Join(", ", document.Authors)}
+             Author(s): {authors}
              Description: {document.Blurb}
              """;
 
-        try
+        var delay = TimeSpan.FromSeconds(1);
+
+        for (int attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            ClientResult<ChatCompletion> result = await _client.CompleteChatAsync(
-                [new SystemChatMessage(SystemPrompt), new UserChatMessage(user)],
-                new ChatCompletionOptions(),
-                cancellationToken).ConfigureAwait(false);
-
-            string text = result.Value.Content.Count > 0 ? result.Value.Content[0].Text : string.Empty;
-
-            foreach (char c in text)
+            try
             {
-                if (c is >= '0' and <= '3')
-                {
-                    return c - '0';
-                }
-            }
+                ClientResult<ChatCompletion> result = await _client.CompleteChatAsync(
+                    [new SystemChatMessage(SystemPrompt), new UserChatMessage(user)],
+                    new ChatCompletionOptions(),
+                    cancellationToken).ConfigureAwait(false);
 
-            return 0;
+                string text = result.Value.Content.Count > 0 ? result.Value.Content[0].Text : string.Empty;
+                return TryParseGrade(text, out int grade) ? grade : -1;
+            }
+            catch (ClientResultException ex)
+                when (IsTransient(ex.Status) && attempt < MaxAttempts - 1)
+            {
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, 30));
+            }
+            catch (ClientResultException)
+            {
+                return -1;
+            }
         }
-        catch (ClientResultException)
-        {
-            // One refused or throttled judgment should not discard the other forty-nine. An
-            // ungraded document falls to the bottom, which is the same treatment an irrelevant one
-            // gets — conservative, and visible in the results as a missing document rather than as
-            // a confidently wrong ranking.
-            return 0;
-        }
+
+        return -1;
     }
 
-    public void Dispose()
+    private static bool IsTransient(int status) => status is 408 or 429 or 500 or 502 or 503 or 504;
+
+    /// <summary>
+    /// Reads the grade out of the reply.
+    /// </summary>
+    /// <remarks>
+    /// A digit outside the scale means the model answered a different question than the one asked,
+    /// so the reply is discarded rather than mined for the first usable character. Without that
+    /// guard a reply of "10" scores 1 and "Grade: 4" scores 0 — values nobody assigned.
+    /// </remarks>
+    private static bool TryParseGrade(string? text, out int grade)
     {
+        grade = 0;
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        foreach (char c in text)
+        {
+            if (c is >= '0' and <= '3')
+            {
+                grade = c - '0';
+                return true;
+            }
+
+            if (char.IsDigit(c))
+            {
+                return false;
+            }
+        }
+
+        return false;
     }
 }

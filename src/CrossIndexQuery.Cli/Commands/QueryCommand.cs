@@ -1,7 +1,10 @@
+using Azure;
+using CrossIndexQuery.Core;
 using CrossIndexQuery.Core.Clients;
 using CrossIndexQuery.Core.Configuration;
 using CrossIndexQuery.Core.Fusion;
 using CrossIndexQuery.Core.Retrieval;
+using CrossIndexQuery.Core.Statistics;
 
 namespace CrossIndexQuery.Cli.Commands;
 
@@ -29,7 +32,25 @@ public sealed class QueryCommand(CrossIndexOptions options)
 
         var factory = new SearchClientFactory(options.Search);
         var retriever = new MultiStripeRetriever(new StripeRetriever(factory), options);
-        FusionStrategyRegistry registry = FusionStrategyRegistry.CreateDefault(factory, options);
+
+        // The sidecar has to be loaded here too, not just in the evaluation harness. Without it the
+        // two strategies that depend on global corpus statistics — including the best-scoring one in
+        // the study — are silently absent from the catalog, so the command that exists to
+        // demonstrate the techniques cannot demonstrate the ones worth using.
+        string dataDirectory = RepositoryLocator.ResolveDataDirectory(options.Corpus.DataDirectory);
+        CorpusStatistics.TryLoad(
+            dataDirectory, options.Corpus.SplitDescriptor, out CorpusStatistics? statistics);
+
+        if (statistics is null)
+        {
+            Console.Error.WriteLine(
+                $"No corpus statistics for the '{options.Corpus.SplitDescriptor}' split; strategies "
+                + "that need global document frequencies are unavailable. Build them with: "
+                + "dotnet run --project src/CrossIndexQuery.DataPrep -- stats");
+            Console.Error.WriteLine();
+        }
+
+        FusionStrategyRegistry registry = FusionStrategyRegistry.CreateDefault(factory, options, statistics);
 
         if (!registry.TryGet(strategyName, out IFusionStrategy? strategy) || strategy is null)
         {
@@ -67,9 +88,39 @@ public sealed class QueryCommand(CrossIndexOptions options)
         FanOutResult fanOut = await retriever.SearchStripesAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
-        IReadOnlyList<FusedDocument> fused = await strategy
-            .FuseAsync(fanOut, new FusionContext(options.Evaluation.TopK, vector), cancellationToken)
-            .ConfigureAwait(false);
+        IReadOnlyList<FusedDocument> fused;
+
+        try
+        {
+            fused = await strategy
+                .FuseAsync(fanOut, new FusionContext(options.Evaluation.TopK, vector), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // A strategy declaring its precondition unmet is reporting honestly, and the command
+            // that exists to teach should say what the precondition was rather than printing a
+            // stack trace.
+            Console.Error.WriteLine($"'{strategy.Name}' cannot run on this query: {ex.Message}");
+
+            if (strategy.RequiresSemanticRanker && !semantic)
+            {
+                Console.Error.WriteLine("Add --semantic so the stripes return reranker scores.");
+            }
+
+            return 1;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            Console.Error.WriteLine($"'{strategy.Name}' needs a resource that does not exist yet.");
+            Console.Error.WriteLine($"  {ex.Message.Split('\n')[0].Trim()}");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine(
+                "Run 'init' to build the indexes and the knowledge base for the current split "
+                + $"('{options.Corpus.SplitDescriptor}'):");
+            Console.Error.WriteLine("  dotnet run --project src/CrossIndexQuery.Cli -- init");
+            return 1;
+        }
 
         if (explain)
         {

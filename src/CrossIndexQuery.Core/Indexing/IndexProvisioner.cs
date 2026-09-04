@@ -167,16 +167,8 @@ public sealed class IndexProvisioner(SearchClientFactory factory, SearchServiceO
             List<BookDocument> slice = documents.GetRange(
                 offset, Math.Min(UploadBatchSize, documents.Count - offset));
 
-            IndexDocumentsResult result = await UploadBatchWithRetryAsync(client, slice, cancellationToken)
+            await UploadBatchWithRetryAsync(client, slice, indexName, cancellationToken)
                 .ConfigureAwait(false);
-
-            IndexingResult[] failures = [.. result.Results.Where(r => !r.Succeeded)];
-            if (failures.Length > 0)
-            {
-                throw new InvalidOperationException(
-                    $"{failures.Length} document(s) failed to index into {indexName}. " +
-                    $"First error: {failures[0].Key} - {failures[0].ErrorMessage}");
-            }
 
             uploaded += slice.Count;
             Console.Write($"\r  {indexName}: {uploaded:N0}/{documents.Count:N0}");
@@ -186,34 +178,106 @@ public sealed class IndexProvisioner(SearchClientFactory factory, SearchServiceO
     }
 
     /// <summary>
-    /// Uploads one batch, retrying the partial failures that indexing reports as 207.
+    /// Uploads one batch, resending only the documents the service rejected transiently.
     /// </summary>
     /// <remarks>
-    /// A busy service rejects individual documents rather than the whole request, so the SDK
-    /// surfaces this as an exception carrying per-document results. Re-sending only the rejected
-    /// documents is both correct and much faster than re-sending the batch.
+    /// <para>
+    /// A busy service rejects individual documents rather than the whole request. The SDK reports
+    /// that as HTTP 207 with a per-document result list and — because <c>ThrowOnAnyError</c>
+    /// defaults to false — does <em>not</em> raise an exception. Partial failure therefore has to be
+    /// detected by inspecting <see cref="IndexDocumentsResult.Results"/>; code that only wraps the
+    /// call in a try/catch will never see it.
+    /// </para>
+    /// <para>
+    /// Treating any rejection as fatal would be worse than useless here: a single throttled document
+    /// would abandon a 10,000-document load that is otherwise fine. Only the rejected documents are
+    /// resent, which is both correct and far cheaper than resending the batch.
+    /// </para>
+    /// <para>
+    /// Per-document status codes are separated by whether resending can help. 429 and 5xx are the
+    /// service asking for backpressure and are retried. A 4xx such as 400 means the document itself
+    /// is malformed, and resending it unchanged will fail identically forever, so it fails fast with
+    /// the service's own message rather than after five pointless round trips.
+    /// </para>
     /// </remarks>
-    private static async Task<IndexDocumentsResult> UploadBatchWithRetryAsync(
+    private static async Task UploadBatchWithRetryAsync(
         SearchClient client,
         IReadOnlyList<BookDocument> batch,
+        string indexName,
         CancellationToken cancellationToken)
     {
+        const int MaxAttempts = 5;
+
+        Dictionary<string, BookDocument> byKey =
+            batch.ToDictionary(d => d.Id, StringComparer.Ordinal);
         IReadOnlyList<BookDocument> pending = batch;
 
         for (int attempt = 0; ; attempt++)
         {
+            IndexDocumentsResult result;
+
             try
             {
-                return await client.UploadDocumentsAsync(pending, cancellationToken: cancellationToken)
+                result = await client
+                    .UploadDocumentsAsync(pending, cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (RequestFailedException ex) when (ex.Status is 207 or 429 or >= 500 && attempt < 5)
+            catch (RequestFailedException ex) when (IsTransient(ex.Status) && attempt < MaxAttempts)
             {
-                await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), cancellationToken)
-                    .ConfigureAwait(false);
+                // The whole request failed rather than individual documents. Same backoff, same
+                // pending set.
+                await DelayAsync(attempt, cancellationToken).ConfigureAwait(false);
+                continue;
             }
+
+            IndexingResult[] failures = [.. result.Results.Where(r => !r.Succeeded)];
+            if (failures.Length == 0)
+            {
+                return;
+            }
+
+            IndexingResult[] permanent = [.. failures.Where(f => !IsTransient(f.Status))];
+            if (permanent.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"{permanent.Length} document(s) were rejected by {indexName} for reasons that "
+                    + $"retrying cannot fix. First: {permanent[0].Key} returned "
+                    + $"{permanent[0].Status} - {permanent[0].ErrorMessage}");
+            }
+
+            if (attempt >= MaxAttempts)
+            {
+                throw new InvalidOperationException(
+                    $"{failures.Length} document(s) were still being throttled by {indexName} after "
+                    + $"{MaxAttempts + 1} attempts. First: {failures[0].Key} returned "
+                    + $"{failures[0].Status} - {failures[0].ErrorMessage}");
+            }
+
+            // Narrow to just the rejected documents before backing off.
+            pending = [.. failures
+                .Select(f => byKey.TryGetValue(f.Key, out BookDocument? doc) ? doc : null)
+                .OfType<BookDocument>()];
+
+            if (pending.Count == 0)
+            {
+                // The service named a key that was not in the batch. Retrying an empty set would
+                // spin forever, so surface it rather than hang.
+                throw new InvalidOperationException(
+                    $"{indexName} reported failures for keys that were not in the submitted batch. "
+                    + $"First: {failures[0].Key}");
+            }
+
+            await DelayAsync(attempt, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// Whether a status is the service asking for backpressure rather than rejecting the content.
+    /// </summary>
+    private static bool IsTransient(int status) => status == 429 || status >= 500;
+
+    private static Task DelayAsync(int attempt, CancellationToken cancellationToken) =>
+        Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), cancellationToken);
 
     private IEnumerable<string> AllIndexes()
     {

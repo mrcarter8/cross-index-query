@@ -122,6 +122,17 @@ public sealed class StripeRetriever(SearchClientFactory factory)
                     {
                         KNearestNeighborsCount = request.Size,
                         Fields = { BookIndexSchema.VectorFieldName },
+
+                        // Off by default, because HNSW is what anyone actually runs. Available
+                        // because it separates two effects that otherwise arrive as one number:
+                        // vector scores are perfectly comparable across indexes, so a striped
+                        // vector search should reproduce the single-index ranking exactly — but
+                        // HNSW is approximate, and traversing two smaller graphs does not visit the
+                        // same neighbours as traversing one large one. Any shortfall under
+                        // exhaustive search is attributable to striping; the difference between
+                        // exhaustive and HNSW is the approximation, and belongs to the algorithm
+                        // rather than to the split.
+                        Exhaustive = request.ExhaustiveVectorSearch,
                     },
                 },
             };
@@ -203,6 +214,18 @@ public sealed record RetrievalRequest
     /// Required for vector and hybrid retrieval.
     /// </summary>
     public ReadOnlyMemory<float>? QueryVector { get; init; }
+
+    /// <summary>
+    /// Forces exact nearest-neighbour search instead of the index's ANN algorithm.
+    /// </summary>
+    /// <remarks>
+    /// Slower, and not how anyone runs in production. It exists so the study can tell two things
+    /// apart. Vector similarity consults no corpus statistics, so a striped vector search ought to
+    /// reproduce the single-index ranking exactly — but HNSW is approximate, and two smaller graphs
+    /// are not traversed the same way as one large one. Without this flag, that approximation error
+    /// is indistinguishable from a cost of striping, and would be reported as one.
+    /// </remarks>
+    public bool ExhaustiveVectorSearch { get; init; }
 
     /// <summary>
     /// Documents to request from each index. Deliberately larger than the final result size:

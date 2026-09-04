@@ -14,6 +14,16 @@ namespace CrossIndexQuery.Cli.Commands;
 /// </summary>
 public sealed class EvaluateCommand(CrossIndexOptions options)
 {
+    /// <summary>
+    /// Every retrieval mode the harness can run.
+    /// </summary>
+    /// <remarks>
+    /// Used only to decide whether a run is a full sweep and can keep the short filename. Derived
+    /// from the enum rather than listed, so adding a mode cannot leave this stale and silently make
+    /// every partial run look like a full one.
+    /// </remarks>
+    private static readonly RetrievalMode[] AllModes = Enum.GetValues<RetrievalMode>();
+
     public async Task<int> RunAsync(
         IReadOnlyList<RetrievalMode> modes,
         bool semantic,
@@ -93,6 +103,15 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
         // name.
         string tier = semantic ? "semantic" : "lexical";
 
+        // So does the mode selection, for exactly the same reason. Without it, `--modes Keyword`
+        // and `--modes Hybrid` are two different experiments writing to one filename, and whichever
+        // ran last silently destroys the other — with nothing in the surviving file to indicate
+        // that anything was lost. Omitted when the run covers every mode, so the common case keeps
+        // the short name.
+        string modeSuffix = modes.Count >= AllModes.Length
+            ? string.Empty
+            : "." + string.Join("-", modes.Select(m => m.ToString().ToLowerInvariant()).Order(StringComparer.Ordinal));
+
         // A re-scoring against a different judge must not overwrite the primary results, or the
         // comparison between them becomes impossible to make.
         string judgeSuffix = string.Equals(
@@ -100,10 +119,9 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
             ? string.Empty
             : ".alt-judge";
 
-        string csvPath = Path.Combine(
-            outputDirectory, $"results.{options.Corpus.SplitDescriptor}.{tier}{judgeSuffix}.csv");
-        string markdownPath = Path.Combine(
-            outputDirectory, $"results.{options.Corpus.SplitDescriptor}.{tier}{judgeSuffix}.md");
+        string stem = $"results.{options.Corpus.SplitDescriptor}.{tier}{modeSuffix}{judgeSuffix}";
+        string csvPath = Path.Combine(outputDirectory, $"{stem}.csv");
+        string markdownPath = Path.Combine(outputDirectory, $"{stem}.md");
 
         // The service name is deliberately not written into published results. It identifies a
         // specific deployment rather than anything a reader needs, and results files are exactly the
@@ -128,18 +146,21 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
         Console.WriteLine($"Wrote {markdownPath}");
 
         // Named per run configuration so a semantic run does not overwrite a lexical one, and one
-        // split does not overwrite another. The judge unions every pool file it finds, which is also
-        // how someone who adds a fusion strategy extends the judged set rather than replacing it.
+        // split does not overwrite another. Deliberately *not* qualified by mode, unlike the results
+        // files: a judgment is a property of a (query, document) pair and does not depend on which
+        // mode surfaced it, so every run should extend one pool per split and tier rather than
+        // fragment it. The judge unions every pool file it finds, which is also how someone who adds
+        // a fusion strategy extends the judged set rather than replacing it.
         string poolPath = Path.Combine(
             outputDirectory,
             $"judgment-pool.{options.Corpus.SplitDescriptor}.{tier}.json");
 
-        await WritePoolAsync(poolPath, run.Pool, cancellationToken).ConfigureAwait(false);
+        int pooled = await WritePoolAsync(poolPath, run.Pool, cancellationToken).ConfigureAwait(false);
 
-        int pairs = run.Pool.Sum(p => p.DocumentIds.Count);
         Console.WriteLine(
-            $"Wrote {poolPath} — {run.Pool.Count} queries, {pairs} unique (query, document) pairs, "
-            + $"{pairs / (double)Math.Max(run.Pool.Count, 1):F1} per query.");
+            $"Wrote {poolPath} — {run.Pool.Count} queries, {pooled} unique (query, document) pairs "
+            + $"after union with any previous run, {pooled / (double)Math.Max(run.Pool.Count, 1):F1} "
+            + "per query.");
 
         return 0;
     }
@@ -148,21 +169,69 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
     /// Writes the pooled candidate set for independent relevance judging.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Deliberately carries no strategy attribution. A judge that can see which system produced a
     /// document can favour one, and the entire purpose of pooling is to obtain judgments that no
     /// approach in the comparison had a hand in.
+    /// </para>
+    /// <para>
+    /// Unions with whatever is already on disk rather than replacing it. One pool file covers a
+    /// split and tier, but a run may cover only some retrieval modes, and each mode surfaces
+    /// different documents. Replacing would let a keyword-only run silently discard the documents
+    /// that a previous hybrid run had pooled — shrinking the judged set, lowering coverage, and
+    /// biasing every subsequent comparison toward whichever arm happened to run last.
+    /// </para>
     /// </remarks>
-    private static async Task WritePoolAsync(
+    private static async Task<int> WritePoolAsync(
         string path,
         IReadOnlyList<EvaluationHarness.PooledCandidate> pool,
         CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
 
+        Dictionary<string, (string Text, SortedSet<string> Ids)> merged = new(StringComparer.Ordinal);
+
+        if (File.Exists(path))
+        {
+            await using FileStream existing = File.OpenRead(path);
+            List<EvaluationHarness.PooledCandidate>? previous =
+                await JsonSerializer.DeserializeAsync<List<EvaluationHarness.PooledCandidate>>(
+                    existing, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            foreach (EvaluationHarness.PooledCandidate candidate in previous ?? [])
+            {
+                merged[candidate.QueryId] =
+                    (candidate.QueryText, new SortedSet<string>(candidate.DocumentIds, StringComparer.Ordinal));
+            }
+        }
+
+        foreach (EvaluationHarness.PooledCandidate candidate in pool)
+        {
+            if (!merged.TryGetValue(candidate.QueryId, out (string Text, SortedSet<string> Ids) entry))
+            {
+                entry = (candidate.QueryText, new SortedSet<string>(StringComparer.Ordinal));
+                merged[candidate.QueryId] = entry;
+            }
+
+            foreach (string id in candidate.DocumentIds)
+            {
+                entry.Ids.Add(id);
+            }
+        }
+
+        List<EvaluationHarness.PooledCandidate> union =
+        [
+            .. merged.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => new EvaluationHarness.PooledCandidate(
+                    kv.Key, kv.Value.Text, [.. kv.Value.Ids]))
+        ];
+
         await using FileStream stream = File.Create(path);
         await JsonSerializer.SerializeAsync(
-            stream, pool, new JsonSerializerOptions { WriteIndented = true }, cancellationToken)
+            stream, union, new JsonSerializerOptions { WriteIndented = true }, cancellationToken)
             .ConfigureAwait(false);
+
+        return union.Sum(p => p.DocumentIds.Count);
     }
 
     /// <summary>
@@ -201,14 +270,20 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
             return records;
         }
 
-        var empty = new Dictionary<string, int>(StringComparer.Ordinal);
-
         return
         [
             .. records.Select(r =>
             {
-                Dictionary<string, int> grades =
-                    judgments.TryGetValue(r.QueryId, out Dictionary<string, int>? g) ? g : empty;
+                // A query with no judgments leaves both columns null. Substituting an empty grade
+                // set would compute a real-looking 0.0, which reads as "returned nothing relevant"
+                // — a claim about the retrieval — where the truth is "not judged", a claim about
+                // the evidence. It would also defeat the null filter in StrategySummary.Aggregate
+                // and drag every average toward zero in proportion to how much of the query set is
+                // unjudged.
+                if (!judgments.TryGetValue(r.QueryId, out Dictionary<string, int>? grades))
+                {
+                    return r;
+                }
 
                 return r with
                 {

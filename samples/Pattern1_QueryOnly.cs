@@ -33,16 +33,20 @@ public static class Pattern1QueryOnly
             ScoringStatistics = ScoringStatistics.Global,
         };
 
-        var tasks = indexes
-            .Select(client => client.SearchAsync<SearchDocument>(query, Options(), cancellationToken))
+        // Started together, then awaited: two indexes cost the latency of the slower one rather than
+        // the sum of both. Each task is paired with the client that issued it, because the index a
+        // result came from is what every correction below depends on.
+        var pending = indexes
+            .Select(client => (
+                Client: client,
+                Task: client.SearchAsync<SearchDocument>(query, Options(), cancellationToken)))
             .ToList();
 
         var hits = new List<Hit>();
 
-        foreach (var task in tasks)
+        foreach (var (client, task) in pending)
         {
             var response = await task.ConfigureAwait(false);
-            var indexName = response.Value.GetType().Name;
             var rank = 0;
 
             await foreach (SearchResult<SearchDocument> result
@@ -50,7 +54,10 @@ public static class Pattern1QueryOnly
             {
                 hits.Add(new Hit(
                     Id: (string)result.Document["id"],
-                    SourceIndex: indexName,
+
+                    // SearchClient knows the index it targets. Attributing a score to the wrong
+                    // index silently inverts every correction that follows.
+                    SourceIndex: client.IndexName,
                     Rank: ++rank,
                     Score: result.Score ?? 0));
             }
@@ -152,12 +159,22 @@ public static class Pattern1QueryOnly
     }
 
     // ---------------------------------------------------------------------------------------
-    // Right way #2 — ignore the scores and recompute BM25 yourself.
+    // Right way #2 - ignore the scores and recompute BM25 yourself.
     //
     // Rather than reconciling two incompatible measurements, compute the measurement a single index
     // would have produced. Every quantity comes from the whole corpus, so the result does not depend
     // on which index returned the document. Exact for multi-term queries, at the cost of needing the
     // document text and doing more arithmetic.
+    //
+    // Measured: a corpus split in two and merged this way is indistinguishable from the same corpus
+    // in one index - +0.005 judged nDCG@10, p = 0.28, with 59 of 100 queries returning an identical
+    // top-10. That is the result to take away: the split disappears.
+    //
+    // A caution about a number you will see in the results table. This strategy also scores +0.096
+    // against the *service's own* BM25, which looks like striping making things better. It is not.
+    // Recomputing scores client-side is a scoring change that helps a single index just as much -
+    // the study measures exactly that with a `single-index-rescored` control, and it accounts for
+    // +0.092 of the +0.096. Adopt this to make the split vanish, not to make relevance better.
     // ---------------------------------------------------------------------------------------
     public static List<Hit> MergeWithGlobalBm25(
         List<Hit> hits,
@@ -201,8 +218,16 @@ public static class Pattern1QueryOnly
     // ---------------------------------------------------------------------------------------
     // Vector results need none of this. Cosine similarity is a property of two vectors and consults
     // no corpus statistics, so it means the same thing in every index. Sorting a merged vector
-    // result set by raw score is correct — measured at Kendall tau = 1.000 against a single index,
-    // which is exact rank agreement.
+    // result set by raw score is correct - measured at Kendall tau = 1.000 against a single index,
+    // which is exact rank agreement, not one inversion in 100 queries.
+    //
+    // One number in the results table needs explaining, because it looks like a cost and is not.
+    // Against HNSW - the approximate algorithm vector indexes actually use - the merged list scores
+    // 0.974 nDCG rather than 1.000. Tau is still exactly 1.000, so nothing was reordered; a few
+    // documents simply never became candidates, because walking two smaller proximity graphs does
+    // not visit the same neighbours as walking one large one. Re-run with exhaustive search and the
+    // gap closes completely: 1.000 fidelity, 1.000 recall, identical judged score. That residual
+    // belongs to the ANN algorithm, not to the split.
     //
     // If your queries are vector-only, striping costs you nothing and you can stop reading here.
     // ---------------------------------------------------------------------------------------

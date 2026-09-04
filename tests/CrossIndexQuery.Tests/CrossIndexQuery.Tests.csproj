@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CrossIndexQuery.Core\CrossIndexQuery.Core.csproj" />
+    <ProjectReference Include="..\..\samples\CrossIndexQuery.Samples.csproj" />
   </ItemGroup>
 
 </Project>

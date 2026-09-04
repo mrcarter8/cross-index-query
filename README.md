@@ -60,8 +60,14 @@ the measurements here confirm it exactly.
 - **The naive score merge is a smaller problem than its reputation.** Real and negative, but small.
 - **The fix is arithmetic.** A statistics file built once offline lets you correct or recompute
   scores client-side, with no model, no extra queries, and no tier change. Done well, the split
-  corpus *beat* the single index on judged relevance. And if you already pay for reranking,
-  splitting costs nothing measurable.
+  becomes undetectable: **+0.005 nDCG against the unsplit corpus, p = 0.28**, with most queries
+  returning an identical top-10. And if you already pay for reranking, splitting costs nothing
+  measurable.
+- **We ran the controls that could have proven us wrong, and one of them did.** An earlier version
+  of this study claimed splitting could *beat* not splitting. A control showed that gain was a
+  change of scorer rather than anything to do with splitting. The claim was withdrawn, the control
+  ships enabled, and [the correction is documented](docs/report.md#the-controls) rather than
+  quietly edited out.
 
 ### What's in the repo
 
@@ -240,6 +246,38 @@ The index with fewer matching documents thinks your term is rarer, scores it hig
 merge. It isn't surfacing better documents — it's surfacing documents that had less competition. The
 more specialized your split, the stronger the bias.
 
+### See it for yourself
+
+Both halves of that example are one command each:
+
+```powershell
+# The mistake - watch the stripe mix come back a=10, b=0
+dotnet run --project src/CrossIndexQuery.Cli -- query "love" --strategy naive-score --explain
+
+# The fix - same two queries, same cost, stripe mix a=1, b=9
+dotnet run --project src/CrossIndexQuery.Cli -- query "love" --strategy global-bm25
+```
+
+`--explain` prints what each index returned and what it scored before the merge, so you can watch
+one document outrank another on a number that was never comparable.
+
+**Or check our numbers without an Azure subscription at all.** Every per-query score in this study
+is committed as CSV, and `compare` re-runs the statistics on them offline and for free:
+
+```powershell
+# The headline claim, and the control that cut it down
+dotnet run --project src/CrossIndexQuery.Cli -- compare `
+  --results results/results.genre.lexical.csv --candidate global-bm25
+
+# The comparison that actually isolates splitting: same rescorer, split vs not
+dotnet run --project src/CrossIndexQuery.Cli -- compare `
+  --results results/results.genre.lexical.csv `
+  --baseline single-index-rescored --candidate global-bm25
+```
+
+That second command prints `+0.0045`, a 95% interval of `[-0.0034, +0.0129]`, and `p = 0.284` — the
+measured cost of splitting the corpus, once nothing else differs.
+
 ```mermaid
 flowchart TB
     Q["Query: <b>love</b>"] --> A["<b>Stripe A</b><br/>fantasy · sci-fi · horror<br/>'love' in 11.7% of docs<br/>→ looks <b>rare</b> → IDF 2.14"]
@@ -271,6 +309,18 @@ the document's. No corpus statistics enter into it, so 0.83 means the same thing
 We measured merged vector results against a single index at **Kendall τ = 1.000 on every one of the
 100 queries.** Not an average — an exact rank match, every time.
 
+One honest footnote, because it's the kind of number that gets misread. Against HNSW — the
+approximate algorithm that vector indexes actually use — the merged list scores 0.974 nDCG rather
+than 1.000. That is *not* a splitting cost. τ is still exactly 1.000, so nothing was reordered; a
+few documents simply never became candidates, because walking two proximity graphs of 5,000
+documents doesn't visit the same neighbors as walking one graph of 10,000. Re-run with exact search
+and the gap disappears completely: **1.000 fidelity, 1.000 recall, identical judged score.**
+
+```powershell
+$env:CIQ_Evaluation__ExhaustiveVectorSearch='true'
+dotnet run --project src/CrossIndexQuery.Cli -- evaluate --modes Vector
+```
+
 ---
 
 ## Part 3 — What it costs, and what gets it back
@@ -280,9 +330,9 @@ We measured merged vector results against a single index at **Kendall τ = 1.000
 | Merge on **ranks** (RRF, interleave) | **−0.061 to −0.081** | the worst option measured |
 | Merge on **raw scores** | −0.015 to −0.002 | small, and judge-dependent |
 | Merge on **corrected scores** | **+0.013 to +0.016** | free |
-| **Recompute BM25** client-side | **+0.096 to +0.102** | free |
+| **Recompute BM25** client-side | **parity** (+0.005, p = 0.28) | free, and the split disappears |
 | **Rerank** on either side | **parity** | costs nothing extra |
-| **Vector-only** workloads | **parity** (τ = 1.000) | exactly free |
+| **Vector-only** workloads | **identical** (τ = 1.000) | provably free |
 
 Ranges span two independent judges. **26 of 27 conclusions were identical under both.**
 
@@ -296,15 +346,23 @@ the scores were already perfectly comparable.
 what this study can resolve — one of the two judges scored it as indistinguishable from not
 splitting at all. Fix it because the fix is free, not because it's an emergency.
 
-**The repairs can beat a single index.** Recomputing BM25 client-side scored **+0.096** above the
-un-split baseline, winning on 74 of 100 queries.
+**Recomputing the scores makes the split vanish.** Rebuild BM25 client-side from corpus-wide
+statistics and the split becomes undetectable: **+0.005 nDCG, p = 0.28**, with 59 of 100 queries
+returning a byte-identical top-10 to the unsplit corpus. Not "an acceptable loss" — no measurable
+loss at all.
 
-> **Why would splitting ever beat *not* splitting?** Not because the scoring improved — it's the same
-> BM25 on both sides. It's candidate selection. A single index spends its top-50 on whatever scores
-> highest globally, which for a broad query can be dominated by one theme. Splitting *guarantees*
-> candidate slots to each part of the corpus, and correcting the scores makes that diversity usable.
-> The gain concentrates in queries whose answers span both indexes — exactly as that explanation
-> predicts.
+> **A correction we left in.** An earlier version of this README claimed that splitting could *beat*
+> not splitting, at +0.096 nDCG. That was wrong, and the way it was wrong is instructive.
+>
+> The strategy changed two things at once: it repaired the cross-index statistics, and it replaced
+> the service's scoring with our own client-side BM25. Only the first has anything to do with
+> splitting. When we finally ran the obvious control — the *same* rescorer applied to the *unsplit*
+> index — it scored +0.092 on its own. Almost the entire "benefit of splitting" was a scoring change
+> that had nothing to do with splitting, and would have helped a single index just as much.
+>
+> The honest number is +0.005, which is nothing. That is a better answer anyway: you don't need
+> splitting to be *good*, you need it to be *free*, and it is. Both controls now run by default, and
+> [the report](docs/report.md#the-controls) shows the decomposition.
 
 ---
 
@@ -315,7 +373,7 @@ Ordered by what they cost you at query time.
 | # | pattern | who ranks | extra queries | extra bill | measured p50 |
 | --- | --- | --- | --- | --- | ---: |
 | **1** | [**Query only**](samples/Pattern1_QueryOnly.cs) | your code — arithmetic | none | **none** | **54 ms** |
-| **2** | [Self-rerank, external](samples/Pattern2_ExternalRerank.cs) | a model you host | none | your model | 21,792 ms |
+| **2** | [Self-rerank, external](samples/Pattern2_ExternalRerank.cs) | a model you host | none | your model | 23,117 ms |
 | **3** | [Built-in semantic ranker](samples/Pattern3_SemanticRanker.cs) | the service | none | semantic meter | 157 ms |
 | **4** | [Agentic retrieval](samples/Pattern4_AgenticRetrieval.cs) | the service, end to end | replaces yours | agentic meter | 327 ms |
 

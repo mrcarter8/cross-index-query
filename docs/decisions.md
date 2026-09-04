@@ -518,3 +518,132 @@ Standalone build in `C:\dev\cross-index-query`, **no git**, not checked in, by e
 Destined to become a subfolder of an Azure-Samples repo later, so Azure-Samples hygiene
 (`page_type: sample` front matter, `.editorconfig`, central package management) is maintained from
 the start rather than retrofitted.
+
+## The headline gain was mostly a confound, and a control found it
+
+**Measured 2026-09-04.** The study's largest claim was that recomputing BM25 client-side over the
+merged pool (`global-bm25`) beats a single index by **+0.096 judged nDCG** (p<0.0001, winning 74 of
+100 queries). Read as a statement about striping, that claim was wrong.
+
+`global-bm25` changes two things at once relative to the single-index baseline. It substitutes
+corpus-wide document frequencies for per-index ones, which is the cross-index repair being
+advertised. It also replaces the service's scoring with a client-side BM25 over text the caller
+already has, which has nothing to do with striping and is available to anybody.
+
+Two controls separate them.
+
+`local-bm25` holds the tokenizer, the constants, the field set and the arithmetic fixed and varies
+only whose statistics are consulted. It scores **0.607** against `global-bm25`'s 0.634, so global
+statistics are worth **+0.027** (p=0.0003, interval [+0.013, +0.042]). Real, and much smaller than
+the headline.
+
+`single-index-rescored` applies the exact same `global-bm25` instance to the single index's own
+results. Because one index holding the whole corpus *is* the corpus, its statistics are the global
+statistics, so this is the striped strategy with the split removed and nothing else changed. It
+scores **0.629**.
+
+The decomposition:
+
+| step | judged nDCG@10 | Δ | p |
+| --- | ---: | ---: | ---: |
+| single index, service BM25 | 0.538 | — | — |
+| single index, client-side rescore | 0.629 | **+0.092** | <0.0001 |
+| two stripes, same client-side rescore | 0.634 | **+0.005** | 0.28 *(n.s.)* |
+
+**95% of the effect was the rescorer. Striping contributed +0.0045, interval [-0.003, +0.013],
+59 of 100 queries returning an identical top-10.**
+
+What this changes:
+
+- The claim "striping can beat a single index" is **withdrawn**. It was an artifact of comparing a
+  rescored striped arm against an unrescored single index.
+- The claim it is replaced by is stronger and simpler: **striping is free when you merge on
+  recomputed scores.** Not "small loss" — statistically indistinguishable from zero, measured
+  against an arm that differs only in the split.
+- The section that attributed the gain to candidate diversity from striping was reasoning from the
+  confound. Striping does enforce candidate diversity, but that mechanism is not what the numbers
+  were showing, and the honest reading is that its effect is too small for this corpus to resolve.
+- The rescorer effect is real but out of scope, and possibly not a search finding at all: it may be
+  field handling (the client-side scorer treats title, authors and blurb as one bag, so length
+  normalization differs from the service's per-field scoring) or judge affinity for blurb-matched
+  text. It is reported, not recommended.
+
+The general lesson, and the reason both controls are committed and run by default: a comparison
+that cannot come out against you is not evidence. `global-bm25` looked like the study's best result
+for as long as nothing was positioned to falsify it.
+
+## Content filtering makes a small slice of the corpus unjudgeable
+
+**Measured 2026-09-04.** Of 67 pairs submitted in the final judging pass, 48 were rejected by Azure
+OpenAI's content filter — `ResponsibleAIPolicyViolation`, predominantly `hate` at medium severity.
+The corpus is real published books, and books about war, atrocity and abuse trip a classifier tuned
+for generated content.
+
+These pairs stay `null` rather than becoming 0. A filtered pair means "not judged", a claim about
+the judging pipeline; scoring it 0 would assert "not relevant", a claim about the document, and
+would penalise whichever strategy surfaced it. Coverage is reported per strategy in every results
+table so the reader can see the effect directly, and every arm in the final keyword run sits at 99%.
+
+The residual risk is that filtering is not uniform across strategies. It is not measurably so here,
+but a corpus with heavier concentration of such material in one stripe would need this checked
+before any cross-arm comparison could be trusted.
+
+## Vector striping is exactly free, and HNSW was hiding it
+
+**Measured 2026-09-04.** The vector-mode results carried an inconsistency nobody had explained:
+Kendall tau was exactly 1.000 against the single index, yet nDCG was 0.974 and recall@10 was 0.959.
+
+Those two facts cannot both be about ranking. A tau of 1.000 means there is not a single rank
+inversion anywhere — every pair of documents appearing in both lists is ordered identically. That is
+what theory predicts, because cosine similarity between a query vector and a document vector
+consults no corpus statistics at all, so it cannot change when the corpus is split. The shortfall
+was therefore not misordering; it was documents that never appeared as candidates.
+
+The cause is that HNSW is an approximate nearest-neighbour algorithm. Traversing two proximity
+graphs of 5,292 and 4,708 documents does not visit the same neighbours as traversing one graph of
+10,000. The missing 4% is search approximation, and it has nothing to do with score comparability.
+
+Confirmed by re-running with exact search (`Evaluation.ExhaustiveVectorSearch`, which sets
+`VectorizedQuery.Exhaustive`):
+
+| vector search | fidelity nDCG@10 | recall@10 | Kendall tau | judged nDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| HNSW (default) | 0.974 | 0.960 | 1.000 | 0.683 |
+| Exhaustive | **1.000** | **1.000** | **1.000** | **0.684** — identical to single index |
+
+Under exact search the striped arm reproduces the single index **exactly**: same documents, same
+order, same judged score to three decimals.
+
+So the claim sharpens from "vector striping is free" to something stronger and more precise:
+
+- **Splitting a corpus has zero effect on vector ranking.** Provable from first principles and now
+  measured at exactly 1.000 on every fidelity metric.
+- **Any shortfall you observe in practice is ANN recall**, an artefact of the index algorithm that
+  would also appear between two runs against the same index with different graph parameters. It is
+  ~2.6% nDCG here and is not a cost of striping.
+
+The flag defaults to false, because HNSW is what production runs and the headline numbers should
+describe what people will actually see. It exists so the two effects can be told apart rather than
+asserted apart.
+
+Note also that `global-rrf` still loses 0.092 judged nDCG under exhaustive search. Rank fusion's
+failure in vector mode is not an ANN artefact either; it is rank fusion discarding scores that were
+already perfectly comparable.
+
+## Results filenames must encode the mode selection
+
+**Fixed 2026-09-04.** Output files were named `results.{split}.{tier}.{csv,md}`, where tier is only
+lexical or semantic. Two runs differing in `--modes` therefore wrote to the same path, and the
+second silently destroyed the first — with nothing in the surviving file to indicate anything had
+been lost. A keyword run was overwritten by a hybrid run during this session and the loss was caught
+only because the section headings changed.
+
+Filenames now carry a mode suffix unless the run covers every mode, in which case the short name is
+kept. The set of "every mode" is derived from the enum rather than listed, so adding a retrieval mode
+cannot leave the check stale and quietly make every partial run look like a full sweep.
+
+The judgment pool is deliberately *not* qualified by mode, because a judgment is a property of a
+(query, document) pair regardless of which mode surfaced it. Instead the pool file now unions with
+whatever is already on disk. Replacing it had the same shape of bug: a keyword-only run would
+discard documents a previous hybrid run had pooled, lowering coverage and biasing comparisons toward
+whichever arm ran last.

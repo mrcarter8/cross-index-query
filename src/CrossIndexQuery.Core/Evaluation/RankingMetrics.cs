@@ -309,10 +309,25 @@ public static class RankingMetrics
     /// beyond the prefix; that assumption is not safe here, because the sample is specifically
     /// measuring lists that diverge.
     /// </para>
+    /// <para>
+    /// Both lists are truncated to <paramref name="k"/> before comparison, and that truncation is
+    /// load-bearing. The oracle is retained to a greater depth than the fused list is returned at,
+    /// so comparing them unclipped evaluates a ten-item candidate against a fifty-item reference:
+    /// positions eleven through fifty count as pure disagreement because the candidate has nothing
+    /// there, and the normaliser assumes a depth the candidate never reaches. A result that
+    /// reproduced the oracle's top ten exactly, in order, scored 0.859 rather than 1.000 — an error
+    /// large enough to reorder strategies, and one that made striping look inherently lossy even
+    /// where it was not.
+    /// </para>
     /// </remarks>
+    /// <param name="k">
+    /// Depth to compare at. Should match the depth the other metrics use, or the columns in a
+    /// results table are not measuring the same thing.
+    /// </param>
     public static double RankBiasedOverlap(
         IReadOnlyList<string> candidate,
         IReadOnlyList<string> oracle,
+        int k,
         double p = 0.9)
     {
         ArgumentNullException.ThrowIfNull(candidate);
@@ -320,7 +335,15 @@ public static class RankingMetrics
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(p);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(p, 1d);
 
-        int depth = Math.Max(candidate.Count, oracle.Count);
+        if (k <= 0)
+        {
+            return 0d;
+        }
+
+        int candidateDepth = Math.Min(k, candidate.Count);
+        int oracleDepth = Math.Min(k, oracle.Count);
+        int depth = Math.Max(candidateDepth, oracleDepth);
+
         if (depth == 0)
         {
             return 1d;
@@ -334,12 +357,12 @@ public static class RankingMetrics
 
         for (int d = 0; d < depth; d++)
         {
-            if (d < candidate.Count && seenCandidate.Add(candidate[d]) && seenOracle.Contains(candidate[d]))
+            if (d < candidateDepth && seenCandidate.Add(candidate[d]) && seenOracle.Contains(candidate[d]))
             {
                 overlap++;
             }
 
-            if (d < oracle.Count && seenOracle.Add(oracle[d]) && seenCandidate.Contains(oracle[d]))
+            if (d < oracleDepth && seenOracle.Add(oracle[d]) && seenCandidate.Contains(oracle[d]))
             {
                 overlap++;
             }

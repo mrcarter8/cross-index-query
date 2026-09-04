@@ -113,9 +113,116 @@ public static class ResultsReporter
 
             sb.AppendLine();
             AppendSpanBreakdown(sb, byMode);
+            AppendSignificance(sb, byMode);
         }
 
         await File.WriteAllTextAsync(path, sb.ToString(), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reports each strategy against the single-index baseline with intervals and corrected p-values.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Emitted only when judgments exist, because significance against the oracle-fidelity metric
+    /// would be a test of whether a strategy reproduces the baseline's ordering, not of whether it
+    /// retrieves better documents. The fidelity columns already answer the first question and the
+    /// baseline scores a definitional 1.000 there, so a test against it is vacuous.
+    /// </para>
+    /// <para>
+    /// The comparison is paired by query id rather than by position, so a strategy that skipped a
+    /// query cannot silently shift the alignment and compare unrelated pairs.
+    /// </para>
+    /// </remarks>
+    private static void AppendSignificance(StringBuilder sb, IEnumerable<EvaluationRecord> records)
+    {
+        EvaluationRecord[] judged = [.. records.Where(r => r.JudgedNdcg is not null)];
+        if (judged.Length == 0)
+        {
+            return;
+        }
+
+        Dictionary<string, double> baseline = judged
+            .Where(r => r.Strategy == EvaluationHarness.SingleIndexBaseline)
+            .ToDictionary(r => r.QueryId, r => r.JudgedNdcg!.Value, StringComparer.Ordinal);
+
+        if (baseline.Count == 0)
+        {
+            return;
+        }
+
+        var comparisons = new List<(string Strategy, PairedComparison Result)>();
+
+        foreach (IGrouping<string, EvaluationRecord> byStrategy in judged
+            .Where(r => r.Strategy != EvaluationHarness.SingleIndexBaseline)
+            .GroupBy(r => r.Strategy, StringComparer.Ordinal))
+        {
+            var baselineScores = new List<double>();
+            var candidateScores = new List<double>();
+
+            foreach (EvaluationRecord record in byStrategy.OrderBy(r => r.QueryId, StringComparer.Ordinal))
+            {
+                if (baseline.TryGetValue(record.QueryId, out double baselineScore))
+                {
+                    baselineScores.Add(baselineScore);
+                    candidateScores.Add(record.JudgedNdcg!.Value);
+                }
+            }
+
+            if (baselineScores.Count > 1)
+            {
+                comparisons.Add(
+                    (byStrategy.Key, SignificanceTests.Compare(baselineScores, candidateScores)));
+            }
+        }
+
+        if (comparisons.Count == 0)
+        {
+            return;
+        }
+
+        // Corrected across every strategy tested in this mode, which is the family a reader is
+        // actually scanning when they look for the winners in the table above.
+        double[] adjusted = SignificanceTests.HolmAdjust(
+            [.. comparisons.Select(c => c.Result.TTestP)]);
+
+        sb.AppendLine("### Significance against the single index").AppendLine();
+        sb.AppendLine(
+            "Paired over the same queries. `Δ judged` is mean judged nDCG@10 minus the single index;")
+          .AppendLine(
+            "the interval is a 95% paired bootstrap over 10,000 resamples. `p (Holm)` is the paired")
+          .AppendLine(
+            "t-test corrected across every strategy in this mode; `p (W)` is the uncorrected Wilcoxon")
+          .AppendLine(
+            "signed-rank, shown because it is the conservative check. W/L/T counts queries where the")
+          .AppendLine("strategy beat, lost to, or tied the single index.").AppendLine();
+
+        sb.AppendLine("| Strategy | Δ judged | 95% interval | d | p (Holm) | p (W) | W/L/T |");
+        sb.AppendLine("| --- | ---: | :---: | ---: | ---: | ---: | :---: |");
+
+        var ordered = comparisons
+            .Select((c, i) => (c.Strategy, c.Result, Adjusted: adjusted[i]))
+            .OrderByDescending(c => c.Result.MeanDifference);
+
+        foreach ((string strategy, PairedComparison result, double adjustedP) in ordered)
+        {
+            sb.Append("| `").Append(strategy).Append("` | ")
+              .Append(Signed(result.MeanDifference)).Append(" | ")
+              .Append('[').Append(Signed(result.IntervalLow)).Append(", ")
+              .Append(Signed(result.IntervalHigh)).Append("] | ")
+              .Append(F2(result.EffectSize)).Append(" | ")
+              .Append(P(adjustedP)).Append(" | ")
+              .Append(P(result.WilcoxonP)).Append(" | ")
+              .Append(result.Wins).Append('/').Append(result.Losses).Append('/').Append(result.Ties)
+              .AppendLine(" |");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine(
+            "An interval that spans zero means the data are consistent with no difference, whatever")
+          .AppendLine(
+            "the point estimate suggests. Treat those rows as parity, not as small effects.")
+          .AppendLine();
     }
 
     /// <summary>
@@ -179,6 +286,22 @@ public static class ResultsReporter
     private static string F1(double value) => value.ToString("F1", CultureInfo.InvariantCulture);
 
     private static string F3(double value) => value.ToString("F3", CultureInfo.InvariantCulture);
+
+    private static string F2(double value) => value.ToString("F2", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Formats a difference with an explicit sign, so a negative effect cannot be skimmed as positive.
+    /// </summary>
+    private static string Signed(double value) =>
+        value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Formats a p-value, collapsing anything below the resolution of the test rather than
+    /// printing a precision the procedure does not have.
+    /// </summary>
+    private static string P(double value) => value < 0.0001
+        ? "&lt;0.0001"
+        : value.ToString("F4", CultureInfo.InvariantCulture);
 
     private static string F4(double value) => value.ToString("F4", CultureInfo.InvariantCulture);
 }

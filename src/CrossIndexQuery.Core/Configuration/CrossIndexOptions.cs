@@ -36,11 +36,17 @@ public sealed class SearchServiceOptions
     /// </summary>
     public string? ApiKey { get; set; }
 
+    /// <summary>Default stripe index names, before the split descriptor is applied.</summary>
+    internal const string DefaultStripeAIndex = "books-stripe-a";
+
+    /// <summary>Second stripe's default name.</summary>
+    internal const string DefaultStripeBIndex = "books-stripe-b";
+
     /// <summary>First stripe of the split corpus.</summary>
-    public string StripeAIndex { get; set; } = "books-stripe-a";
+    public string StripeAIndex { get; set; } = DefaultStripeAIndex;
 
     /// <summary>Second stripe of the split corpus.</summary>
-    public string StripeBIndex { get; set; } = "books-stripe-b";
+    public string StripeBIndex { get; set; } = DefaultStripeBIndex;
 
     /// <summary>
     /// Ground-truth index holding the entire corpus in one place. Used only by the
@@ -48,8 +54,18 @@ public sealed class SearchServiceOptions
     /// </summary>
     public string OracleIndex { get; set; } = "books-oracle";
 
-    /// <summary>Knowledge base used by the agentic-retrieval fusion strategy.</summary>
-    public string KnowledgeBaseName { get; set; } = "books-kb";
+    /// <summary>Default knowledge base name, before the split descriptor is applied.</summary>
+    internal const string DefaultKnowledgeBaseName = "books-kb";
+
+    /// <summary>
+    /// Knowledge base used by the agentic-retrieval strategy.
+    /// </summary>
+    /// <remarks>
+    /// Split-qualified like the stripe indexes, because a knowledge base names the specific indexes
+    /// it federates. Reusing one across splits would leave it pointing at the previous scenario's
+    /// indexes and answering from them without complaint.
+    /// </remarks>
+    public string KnowledgeBaseName { get; set; } = DefaultKnowledgeBaseName;
 
     /// <summary>Semantic configuration name, identical across all three indexes.</summary>
     public string SemanticConfigurationName { get; set; } = "books-semantic";
@@ -221,6 +237,26 @@ public sealed class EvaluationOptions
 
     /// <summary>Documents requested from each stripe before fusion.</summary>
     public int PerStripeK { get; set; } = 50;
+
+    /// <summary>
+    /// Forces exact nearest-neighbour search in vector and hybrid modes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Defaults to false, because HNSW is what production workloads run and the headline numbers
+    /// should describe what people will actually experience.
+    /// </para>
+    /// <para>
+    /// Set it to true to separate two effects that otherwise arrive as a single number. Vector
+    /// similarity consults no corpus statistics, so splitting a corpus cannot change how any two
+    /// documents compare — and the measured Kendall τ of 1.000 confirms it, with no rank inversions
+    /// at all. Yet recall@10 is 0.959, because HNSW is approximate and traversing two smaller
+    /// proximity graphs does not visit the same neighbours as traversing one large one. That
+    /// shortfall is an artefact of the search algorithm, not a cost of striping, and running with
+    /// this flag is how you demonstrate the difference rather than assert it.
+    /// </para>
+    /// </remarks>
+    public bool ExhaustiveVectorSearch { get; set; }
 
     /// <summary>
     /// Whether <see cref="PerStripeK"/> is per index or the total for the arm.

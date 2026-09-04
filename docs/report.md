@@ -27,7 +27,7 @@ This report shows the measurements behind all three claims.
 
 ## Summary
 
-Measured over 10,000 documents, 100 queries, and 6,805 relevance judgments graded by an independent
+Measured over 10,000 documents, 100 queries, and 7,016 relevance judgments graded by an independent
 model — then **re-graded entirely by a second model**, with every conclusion recomputed. 26 of 27
 conclusions were identical under both judges.
 
@@ -36,9 +36,9 @@ conclusions were identical under both judges.
 | Merge on **ranks** (RRF, interleave) | **−0.061 to −0.081** *(p<0.0001)* | the worst thing you can do |
 | Merge on **raw scores** | −0.015 to −0.002 | small, and judge-dependent |
 | Merge on **corrected scores** | **+0.013 to +0.016** *(p<0.005)* | free, and better than not striping |
-| **Recompute BM25** client-side | **+0.096 to +0.102** *(p<0.0001)* | free, and much better |
-| **Rerank** on either side | **parity** *(p=0.24–0.49)* | striping costs nothing |
-| **Vector-only** workloads | **parity** *(τ=1.000)* | striping is exactly free |
+| **Recompute BM25** client-side | **+0.005** *(p=0.28)* vs the same rescorer unstriped | **striping is free** |
+| **Rerank** on either side | **parity** *(Holm p=1.000)* | striping costs nothing |
+| **Vector-only** workloads | **exactly identical** *(τ=1.000, and 1.000 fidelity under exact search)* | striping is provably free |
 
 Ranges show the two independent judges. Findings worth carrying away:
 
@@ -54,6 +54,18 @@ Ranges show the two independent judges. Findings worth carrying away:
    in either direction. If relevance is your problem, that is where the leverage is.
 5. **Vector search has no cross-index problem at all.** Cosine similarity consults no corpus
    statistics, so merged results reproduce the single-index ranking exactly.
+
+> **A correction, kept in place deliberately.** An earlier version of this report claimed the
+> client-side BM25 recomputation made a striped corpus **beat** a single index by +0.096 nDCG. That
+> claim was confounded and has been withdrawn. The strategy changed two things at once — it repaired
+> the cross-index statistics *and* replaced the service's scoring with a client-side scorer — and
+> almost all of the measured gain was the second one, which has nothing to do with striping. A
+> control that applies the identical rescorer to the single index ([`single-index-rescored`](#the-controls))
+> scores +0.092 on its own, leaving **+0.005 (p=0.28)** attributable to the split.
+>
+> The replacement claim is narrower and considerably more useful: **striping costs nothing when you
+> merge on recomputed scores.** Section 4 shows the decomposition, and the controls that produced it
+> ship enabled by default so anyone can re-run them.
 
 ---
 
@@ -183,8 +195,10 @@ Under size imbalance this promotes the small index's best non-answer on every si
 | **`@search.rerankerScore`** | **Yes** | Cross-encoder over (query, document). No corpus statistics |
 
 **Vector search has no cross-index problem at all.** Measured over 100 queries, merging two indexes'
-vector results by raw score reproduces the single-index ranking at **Kendall τ = 1.000** — exact rank
-agreement. If your workload is vector-only, striping is free and you can stop reading.
+vector results by raw score reproduces the single-index ranking at **Kendall τ = 1.000** — exact
+rank agreement, not one inversion. Under exact nearest-neighbour search the reproduction is total:
+fidelity 1.000, recall 1.000, identical judged score. If your workload is vector-only, striping is
+free and you can stop reading.
 
 ---
 
@@ -254,17 +268,74 @@ conclusion that moved is flagged where it appears.
 Genre split: stripe A 5,292 documents, stripe B 4,708. Balanced sizes, maximum vocabulary
 divergence. Keyword retrieval, no reranking anywhere.
 
-| strategy | judged nDCG | vs single | p | fidelity | queries | CU | p50 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **`global-bm25`** | **0.635** | **+0.096** | **<0.0001** | 0.672 | 2 | 0.0005 | 56 ms |
-| `idf-correct-probe` | 0.552 | +0.014 | **0.002** | 0.963 | 8.5 | 0.0007 | 308 ms |
-| **`idf-correct-sidecar`** | **0.551** | **+0.013** | **0.005** | 0.965 | 2 | 0.0005 | **54 ms** |
-| *single index (baseline)* | *0.539* | — | — | *1.000* | *1* | *0.0004* | *65 ms* |
-| `naive-score` | 0.524 | −0.015 | 0.034 | 0.937 | 2 | 0.0005 | 54 ms |
-| `minmax-norm` | 0.474 | −0.064 | <0.0001 | 0.886 | 2 | 0.0005 | 54 ms |
-| `zscore-norm` | 0.472 | −0.067 | <0.0001 | 0.880 | 2 | 0.0005 | 54 ms |
-| **`global-rrf`** | **0.466** | **−0.073** | **<0.0001** | 0.883 | 2 | 0.0005 | 54 ms |
-| `interleave` | 0.458 | −0.081 | <0.0001 | 0.867 | 2 | 0.0005 | 54 ms |
+| strategy | judged nDCG | vs single | 95% interval | p (Holm) | fidelity | queries | CU | p50 |
+| --- | ---: | ---: | :---: | ---: | ---: | ---: | ---: | ---: |
+| **`global-bm25`** | **0.634** | **+0.096** | [+0.064, +0.128] | **<0.0001** | 0.672 | 2 | 0.0006 | 58 ms |
+| *`single-index-rescored`* ⟵ *control* | *0.629* | *+0.092* | *[+0.058, +0.124]* | *<0.0001* | *0.668* | *1* | *0.0004* | *66 ms* |
+| *`local-bm25`* ⟵ *control* | *0.607* | *+0.069* | *[+0.036, +0.102]* | *0.0003* | *0.609* | *2* | *0.0006* | *58 ms* |
+| `idf-correct-probe` | 0.552 | +0.014 | [+0.005, +0.023] | **0.011** | 0.963 | 8.5 | 0.0007 | 316 ms |
+| **`idf-correct-sidecar`** | **0.550** | **+0.013** | [+0.003, +0.022] | **0.017** | 0.965 | 2 | 0.0006 | **57 ms** |
+| *single index (baseline)* | *0.538* | — | — | — | *1.000* | *1* | *0.0004* | *66 ms* |
+| `naive-score` | 0.523 | −0.015 | [−0.029, −0.001] | 0.041 | 0.937 | 2 | 0.0006 | 57 ms |
+| `minmax-norm` | 0.474 | −0.064 | [−0.091, −0.039] | <0.0001 | 0.886 | 2 | 0.0006 | 57 ms |
+| `zscore-norm` | 0.471 | −0.067 | [−0.092, −0.042] | <0.0001 | 0.880 | 2 | 0.0006 | 57 ms |
+| **`global-rrf`** | **0.465** | **−0.073** | [−0.099, −0.048] | **<0.0001** | 0.883 | 2 | 0.0006 | 57 ms |
+| `interleave` | 0.457 | −0.081 | [−0.107, −0.055] | <0.0001 | 0.867 | 2 | 0.0006 | 57 ms |
+
+Intervals are 95% paired bootstrap over 10,000 resamples. `p (Holm)` is a paired t-test corrected
+across all ten comparisons in this mode, so these are the values to read — not the raw ones. Every
+number here is reproducible offline from the committed per-query CSV:
+
+```
+cli compare --results results/results.genre.lexical.csv --candidate global-bm25
+```
+
+The two italicised rows are **controls, not recommendations**. They exist to attack the row above
+them, and they succeeded. Read [the controls](#the-controls) before reading anything into
+`global-bm25`'s +0.096.
+
+### The controls
+
+`global-bm25` changes two things at once relative to the baseline: it repairs the cross-index
+statistics, and it replaces the service's scoring with a client-side BM25 over text the caller
+already has. Only the first is about striping. The second is a scoring change available to anyone,
+split corpus or not — and if it accounts for the gain, then the headline number says nothing about
+striping at all.
+
+Two controls take that apart.
+
+**`local-bm25`** holds the tokenizer, the constants, the field set and the arithmetic fixed and
+varies only whose document frequencies are consulted, taking each document's statistics from the
+index that returned it. It is the same code path with one input swapped. Global statistics are worth
+**+0.027** over it (p=0.0003, interval [+0.013, +0.042]) — real, and a quarter of the headline.
+
+**`single-index-rescored`** applies the identical `global-bm25` instance to the single index's own
+results. A single index holding the whole corpus *is* the corpus, so its statistics are already the
+global statistics; this is the striped strategy with the split removed and nothing else changed. It
+is the only arm in this study that differs from a striped arm in the split alone.
+
+| step | judged nDCG@10 | Δ | 95% interval | p |
+| --- | ---: | ---: | :---: | ---: |
+| single index, service BM25 | 0.538 | — | — | — |
+| single index, **client-side rescore** | 0.629 | **+0.092** | [+0.058, +0.124] | <0.0001 |
+| two stripes, **same client-side rescore** | 0.634 | **+0.005** | [−0.003, +0.013] | 0.28 *(n.s.)* |
+
+**95% of the effect was the rescorer.** Striping contributed +0.0045, an interval spanning zero, and
+59 of 100 queries returned an identical top-10.
+
+So the claim that striping *beats* a single index is withdrawn. What survives is narrower and more
+useful: **striping costs nothing when you merge on recomputed scores** — not "a small loss", but
+statistically indistinguishable from zero against an arm that differs only in the split.
+
+The rescorer effect is real and reproduces, but it is not a striping result and this study does not
+recommend it as one. It plausibly reflects field handling rather than retrieval quality: the
+client-side scorer treats title, authors and blurb as a single bag of terms, so length normalization
+differs from the service's per-field scoring. Judge affinity for blurb-matched text is a second
+candidate. Separating those was out of scope here.
+
+Both controls are registered by default and run on every evaluation. A comparison that cannot come
+out against you is not evidence, and `global-bm25` looked like the best result in this study for
+exactly as long as nothing was positioned to falsify it.
 
 ### Reading this table
 
@@ -278,28 +349,38 @@ a change of judge**, and it should be stated as directional rather than establis
 70 of 100 queries, and reproduces under both judges. The conventional cross-index recommendation is
 the worst option measured — a far bigger effect than the naive merge everyone worries about.
 
-**Both repairs beat the single index, and one of them decisively.** IDF correction recovers the loss
-and adds 0.013 on top (p=0.005). Client-side BM25 recomputation adds **0.096** (p<0.0001), winning on
-74 of 100 queries — at the same query cost as naive merging. Both hold under the second judge.
+**Both repairs beat the single index, and one of them appears to decisively.** IDF correction
+recovers the loss and adds 0.013 on top (Holm p=0.017). Client-side BM25 recomputation adds
+**0.096** (p<0.0001), winning on 74 of 100 queries — at the same query cost as naive merging. Both
+hold under the second judge. But see [the controls](#the-controls): almost all of that 0.096 is the
+rescorer rather than the split, and the striping-attributable part is +0.005 and not significant.
+The IDF correction result is not affected, because it rescales the service's own scores rather than
+replacing them, so it changes exactly one thing.
 
 **Note `global-bm25`'s fidelity: 0.672.** It deviates *substantially* from the single-index ranking.
 Under a fidelity-only metric that reads as the second-worst result in the table; judged against
 absolute relevance it is the best by a wide margin. This is precisely the case pooled judging exists
-to detect, and it is why this study does not rely on oracle fidelity alone.
+to detect, and it is why this study does not rely on oracle fidelity alone. Note also that
+`single-index-rescored` has essentially the same fidelity, 0.668 — further evidence that the
+deviation is the scorer's doing and not the split's.
 
-**The sidecar costs nothing at query time.** Same 2 queries, same 0.0005 CU, and 54 ms against the
-single index's 65 ms — striping is *faster*, because the fan-out is concurrent and each index is
-half the size. The probe variant buys no additional quality for 5.7× the latency, which makes it a
+**The sidecar costs nothing at query time.** Same 2 queries, same 0.0006 CU, and 57 ms against the
+single index's 66 ms — striping is *faster*, because the fan-out is concurrent and each index is
+half the size. The probe variant buys no additional quality for 5.5× the latency, which makes it a
 useful cautionary row: it is the version people invent when they do not want to ship a sidecar.
 
-### Why striping can exceed a single index
+### Where the remaining effects land
 
-The gain is not in scoring — the ranking function is identical BM25 on both sides. It is in
-**candidate selection**. A single index spends its top-50 on whatever scores highest globally, which
-for a cross-cutting query can be dominated by one theme. Striping guarantees candidate slots to each
-half of the corpus, and the correction makes the resulting diversity usable.
+Striping is often argued to help by enforcing candidate diversity: a single index spends its top-50
+on whatever scores highest globally, which for a cross-cutting query can be dominated by one theme,
+whereas striping guarantees candidate slots to each half of the corpus.
 
-The evidence is in where the gain lands:
+That mechanism is real, but this study cannot show it is worth much. The controlled striping effect
+is +0.005 with an interval spanning zero, so whatever diversity buys here is below what 100 queries
+on a 10,000-document corpus can resolve. An earlier version of this report read the +0.096 as
+evidence for diversity; that was reasoning from the confound.
+
+What the span breakdown *does* show is two effects with opposite signatures, both small:
 
 | strategy | stripe-local queries (n=40) | cross-stripe queries (n=60) |
 | --- | ---: | ---: |
@@ -334,13 +415,38 @@ at **no extra queries**, because the per-leg subscores come back on the same res
 ratio is meaningless — there is no BM25 left in the number to correct. Apply the right repair to the
 right signal, or make things worse.
 
-**Vector striping is free** — parity at p=0.18, and exact rank agreement (Kendall τ = 1.000) with the
-single index.
+**Vector striping is exactly free — and we can prove it, not just measure parity.** Score merging
+reproduces the single index at **Kendall τ = 1.000**: not one rank inversion across 100 queries.
+That is what theory predicts, because cosine similarity consults no corpus statistics and therefore
+cannot change when the corpus is split.
+
+The residual is worth understanding, because it is the kind of number that gets misattributed.
+Fidelity nDCG measures 0.974 and recall@10 measures 0.960 — a 4% shortfall that sits oddly beside a
+perfect τ. The two are not in conflict: τ = 1.000 says nothing was *reordered*, and the shortfall
+says a few documents never became *candidates*. That is HNSW. Traversing two proximity graphs of
+5,292 and 4,708 documents does not visit the same neighbours as traversing one graph of 10,000.
+
+Re-running with exact nearest-neighbour search settles it:
+
+| vector search | fidelity nDCG@10 | recall@10 | Kendall τ | judged nDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| HNSW *(the default, and what you run)* | 0.974 | 0.960 | 1.000 | 0.683 |
+| Exhaustive | **1.000** | **1.000** | **1.000** | **0.684** |
+
+Under exact search the striped arm reproduces the single index perfectly — same documents, same
+order, same judged score. **Splitting costs nothing; the 2.6% is approximate-search recall**, an
+artefact of the index algorithm that would appear just as readily between two runs against a single
+index built with different graph parameters. Reproduce it with:
+
+```
+CIQ_Evaluation__ExhaustiveVectorSearch=true cli evaluate --modes Vector
+```
 
 **The vector row is the cleanest possible proof that rank fusion is the problem.** Cosine scores are
 already perfectly comparable across indexes; there is nothing to repair. Yet RRF still loses 0.094
 (p<0.0001), and round-robin interleaving loses 0.102. Neither is fixing incomparability — they are
-destroying information that was already correct.
+destroying information that was already correct. And this is not an ANN artefact either: under
+exhaustive search, where score merging is exact, RRF still loses 0.092.
 
 ---
 
@@ -420,35 +526,49 @@ Measured on the genre split, keyword mode. **Pattern 1 is scored against an un-r
 index; patterns 2–4 against a reranked one**, because comparing a reranked striped result to an
 un-reranked single index measures the reranker, not the striping.
 
-**Pattern 1 — no reranking on either side.** Baseline: single index 0.539.
+**Pattern 1 — no reranking on either side.** Baseline: single index 0.538.
 
-| strategy | judged nDCG | vs single | p | p50 latency |
+| strategy | judged nDCG | vs single | p (Holm) | p50 latency |
 | --- | ---: | ---: | ---: | ---: |
-| `global-bm25` | **0.635** | **+0.096** | **<0.0001** | 56 ms |
-| `idf-correct-sidecar` | 0.551 | +0.013 | 0.005 | **54 ms** |
-| *single index* | *0.539* | — | — | *65 ms* |
-| `naive-score` | 0.524 | −0.015 | 0.034 | 54 ms |
-| `global-rrf` | 0.466 | −0.073 | <0.0001 | 54 ms |
+| `global-bm25` | **0.634** | **+0.096** | **<0.0001** | 58 ms |
+| *`single-index-rescored`* ⟵ *control* | *0.629* | *+0.092* | *<0.0001* | *66 ms* |
+| `idf-correct-sidecar` | 0.550 | +0.013 | 0.017 | **57 ms** |
+| *single index* | *0.538* | — | — | *66 ms* |
+| `naive-score` | 0.523 | −0.015 | 0.041 | 57 ms |
+| `global-rrf` | 0.465 | −0.073 | <0.0001 | 57 ms |
 
-**Patterns 2–4 — reranking on both sides.** Baseline: single index **0.732**.
+The control row is why `global-bm25`'s +0.096 must not be read as a striping result: the same
+rescorer on a single index gets +0.092 of it. Striping-attributable: **+0.005, p=0.28**. See
+[the controls](#the-controls).
 
-| pattern | strategy | judged nDCG | vs single | p | CU | p50 latency |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| **2** | `external-rerank` | **0.759** | **+0.028** | 0.045 | 0.0007 | **21,792 ms** |
-| — | *single index + semantic* | *0.732* | — | — | 0.0004 | 159 ms |
-| **3** | `semantic-score` | 0.726 | −0.006 | **0.49** *(parity)* | 0.0007 | **157 ms** |
-| **3** | `semantic-rerank` | 0.726 | −0.006 | **0.49** *(parity)* | 0.0013 | 274 ms |
-| **4** | `agentic-retrieval` | 0.721 | −0.011 | **0.24** *(parity)* | — | 327 ms |
-| 1 | `global-rrf` *(for contrast)* | 0.623 | −0.109 | <0.0001 | 0.0007 | 157 ms |
+**Patterns 2–4 — reranking on both sides.** Baseline: single index **0.723**.
+
+| pattern | strategy | judged nDCG | vs single | 95% interval | p (Holm) | CU | p50 latency |
+| --- | --- | ---: | ---: | :---: | ---: | ---: | ---: |
+| **2** | `external-rerank` | **0.769** | **+0.046** | [+0.020, +0.074] | **0.0065** | 0.0008 | **23,117 ms** |
+| — | *single index + semantic* | *0.723* | — | — | — | 0.0004 | 155 ms |
+| **3** | `semantic-score` | 0.724 | +0.001 | [−0.015, +0.016] | **1.000** *(parity)* | 0.0008 | **149 ms** |
+| **3** | `semantic-rerank` | 0.724 | +0.001 | [−0.015, +0.016] | **1.000** *(parity)* | 0.0014 | 254 ms |
+| **4** | `agentic-retrieval` | 0.719 | −0.004 | [−0.021, +0.013] | **1.000** *(parity)* | — | 331 ms |
+| 1 | `global-rrf` *(for contrast)* | 0.620 | −0.103 | [−0.133, −0.074] | <0.0001 | 0.0008 | 149 ms |
+| 1 | *`single-index-rescored`* ⟵ *control* | *0.629* | *−0.094* | *[−0.122, −0.067]* | *<0.0001* | 0.0004 | *155 ms* |
+
+That last row is the control behaving exactly as it should. Client-side BM25 recomputation was the
+best thing you could do in the keyword tier; here it is one of the worst, because rebuilding a BM25
+score throws away the cross-encoder score that was the whole point of paying for reranking. A
+technique is not good or bad in itself — it is good or bad for a particular signal, and the control
+demonstrates that rather than asserting it.
 
 ### What this says
 
-**Patterns 3 and 4 reach statistical parity with a single index.** Semantic ranking p=0.49, agentic
-retrieval p=0.24. If you are already paying for reranking, **striping costs you nothing measurable**.
-That is the cleanest answer in this report for anyone at that tier.
+**Patterns 3 and 4 reach statistical parity with a single index.** Semantic ranking lands at
++0.001 with a Holm-corrected p of 1.000 and 32 of 100 queries returning an identical list; agentic
+retrieval at −0.004, likewise indistinguishable. If you are already paying for reranking,
+**striping costs you nothing measurable**. That is the cleanest answer in this report for anyone at
+that tier.
 
 **Reranking is worth ~0.19 nDCG — an order of magnitude more than anything striping does to you.**
-The single index goes from 0.539 to 0.732 when the semantic ranker is switched on. This is the most
+The single index goes from 0.538 to 0.723 when the semantic ranker is switched on. This is the most
 important number here for anyone deciding where to spend, and it is also why tiers 3 and 4 must
 never be used to argue *for* striping: they improve a single index by just as much.
 
@@ -461,7 +581,7 @@ free. A second reranking pass buys nothing.
 no client-side merge code at all. It bills on its own meter rather than in compute units, so its CU
 column is not comparable to the others; its latency is.
 
-**Pattern 2 is the only thing that beat a reranked single index** (+0.028, p=0.045) — and it took
+**Pattern 2 is the only thing that beat a reranked single index** (+0.046, Holm p=0.0065) — and it took
 **21.8 seconds per query** against 157 ms. That is a 139× latency multiplier for a result that is
 0.028 better and, at seven comparisons, does not survive Bonferroni. It is the right answer only
 when no built-in reranker is available to you.
@@ -481,8 +601,8 @@ query time.
 | Merge on ranks (RRF, interleave) | **−0.061 to −0.081** — worst option measured |
 | Merge on raw scores | −0.015 to −0.002 — small, judge-dependent |
 | Merge on corrected scores | **+0.013 to +0.016** |
-| Recompute BM25 client-side | **+0.096 to +0.102** |
-| Rerank on either side | **parity** (p=0.24–0.49) |
+| Recompute BM25 client-side | **parity** — +0.005 (p=0.28) against the same rescorer unstriped |
+| Rerank on either side | **parity** (Holm p=1.000) |
 
 ### If you are striping to escape the size limit and nothing else
 
@@ -497,8 +617,11 @@ that it has a measurable relevance cost.
    option we measured, in every mode — including vector, where there is nothing for it to fix.
 2. **Merge on scores, corrected.** Build the global-statistics sidecar. It costs one offline pass and
    nothing at query time.
-3. **If you can return the document text, recompute BM25 client-side.** Best measured result in the
-   study, at the same query cost as doing it wrong.
+3. **If you can return the document text, recompute BM25 client-side.** It removes the cross-index
+   score-scale problem outright, at the same query cost as doing it wrong, and measures at parity
+   with the same rescorer on an unsplit corpus. Note what the controls showed: most of its raw
+   advantage over the service baseline is the change of scorer, not the striping repair, so adopt it
+   for the repair and treat any additional gain as unproven.
 4. **Decompose hybrid queries into their legs.** A hybrid score is already fused and cannot be
    re-fused correctly. The subscores come back free on the same response.
 5. **Apply the right repair to the right signal.** IDF correction on a hybrid score makes things
@@ -511,11 +634,11 @@ that it has a measurable relevance cost.
 
 | your situation | use | expected outcome |
 | --- | --- | --- |
-| Keyword or hybrid, cost-sensitive | **Pattern 1**, sidecar or client-side BM25 | parity to +0.096 |
+| Keyword or hybrid, cost-sensitive | **Pattern 1**, sidecar or client-side BM25 | parity to +0.013 |
 | Vector only | **Pattern 1**, naive merge is correct | parity |
 | Already paying for semantic ranking | **Pattern 3**, merge on `rerankerScore` | parity |
 | Want the service to own collation | **Pattern 4** | parity |
-| No built-in reranker available | **Pattern 2** | +0.028, at ~22 s/query |
+| No built-in reranker available | **Pattern 2** | +0.046, at ~23 s/query |
 
 ---
 
@@ -536,6 +659,12 @@ Agreement: exact 53.8%, within one grade 90.5%, quadratically weighted kappa **0
 losses, client-side BM25's gains, IDF correction's gains, vector and hybrid parity — reproduces under
 both judges.
 
+Note what a judge check can and cannot do. Both judges agreed that `global-bm25` scores far above
+the single index, and both were right about that; neither could reveal that the gain was mostly a
+change of scorer rather than a striping effect. Judge agreement tests whether a measurement is
+stable. It says nothing about whether the measurement answers the question being asked. That
+requires a control.
+
 This does not eliminate the concern. Both judges come from the same model family, so a bias shared
 across that family would be invisible to this check. What it establishes is that the results are not
 artefacts of one model's idiosyncrasies, and that they survive a judge grading half a point more
@@ -552,7 +681,31 @@ than we measured, and the correction shown here handles only the IDF half.**
 against strategies that surface documents no other approach found. Coverage is reported per strategy
 for this reason, and it mattered: `global-bm25` first measured at 81% coverage and scored +0.040;
 after extending the pool to 99% coverage it scored **+0.096**. The bias was suppressing the best
-result in the study by more than half. Final coverage is 99–100% for every strategy reported.
+result in the study by more than half. Final coverage is 99–100% for every strategy reported. The
+same trap caught the control on its first run — `local-bm25` scored 0.594 at 94% coverage and 0.607
+at 99% — which is why no comparison in this report is drawn between arms at different coverage.
+
+**Confounded strategies, and why every claim now has a control.** The largest single correction to
+this study came from asking what *else* changes when a strategy is applied. `global-bm25` was
+reported at +0.096 against the single index for several revisions before anyone asked whether the
+gain was the cross-index repair or the client-side scorer that came with it. It was mostly the
+scorer: an arm applying the identical rescorer to an unsplit corpus scores +0.092 by itself.
+
+The general failure is worth naming because it is easy to repeat. A strategy that differs from its
+baseline in two ways produces one number, and that number will be read as evidence for whichever
+mechanism the author was thinking about. The defence is not care; it is a control that varies one
+thing and is capable of coming out against you. Two now ship enabled by default —
+[`local-bm25` and `single-index-rescored`](#the-controls) — and no strategy in this report is
+recommended on the strength of a comparison that lacks one.
+
+**Some documents cannot be judged at all.** 48 of the final 67 pairs submitted to the judge were
+rejected by Azure OpenAI's content filter as `ResponsibleAIPolicyViolation`, predominantly `hate` at
+medium severity. The corpus is real published books, and books about war, atrocity and abuse trip a
+classifier tuned for generated content. Those pairs remain `null` — "not judged" — rather than
+becoming 0, because scoring them 0 would assert they are irrelevant and would penalise whichever
+strategy surfaced them. The residual risk is that filtering is not uniform across strategies; it is
+not measurably so here, with every arm at 99% coverage, but a corpus concentrating such material in
+one stripe would need this checked before any cross-arm comparison could be trusted.
 
 **Model-generated relevance judgments, not human ones.** Standard IR benchmarks such as TREC use
 trained human assessors. This study does not. The mitigation is the two-judge check above and the

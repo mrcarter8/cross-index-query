@@ -31,12 +31,22 @@ namespace CrossIndexQuery.Core.Fusion;
 /// both so the trade is explicit rather than assumed.
 /// </para>
 /// <para>
-/// One structural consequence deserves attention. The reranker accepts at most 50 documents per
-/// query. A single index therefore reranks 50 candidates, while two stripes reranked in place put
-/// 100 documents through the cross-encoder. Striping can consequently surface a document that a
-/// single index would never have reranked at all, which means the single-index oracle is not
-/// automatically an upper bound under semantic ranking. That is a measurable claim, and it is left
-/// to the harness to confirm or refute on real data rather than asserted here.
+/// One structural consequence deserves attention, and it depends on which candidate budget the
+/// harness is running. The reranker accepts at most 50 documents per query. This strategy names its
+/// candidates explicitly through a key filter, so the number it sends is whatever
+/// <c>maxCandidatesPerStripe</c> says: under the default <c>Equalized</c> budget that is 25 per
+/// stripe, which puts the same 50 documents through the cross-encoder as a single index would.
+/// Under <c>PerIndex</c> it is 50 per stripe, and two stripes then rerank 100 against the oracle's
+/// 50 — which is the condition under which striping could surface a document a single index would
+/// never have reranked at all.
+/// </para>
+/// <para>
+/// That contrast does <em>not</em> apply to in-place semantic retrieval, where the service selects
+/// its own candidates. Measured directly against the live service, the reranker window is exactly
+/// 50 per index and is <em>not</em> controlled by the requested result count: a query asking for 25
+/// results and one asking for 50 return an identical first 25. Asking a stripe for fewer results
+/// therefore discards documents the reranker already scored rather than narrowing what it saw, so
+/// the in-place path is structurally 2x50 regardless of budget. See <c>docs/decisions.md</c>.
 /// </para>
 /// </remarks>
 public sealed class SemanticRerankFusion(
@@ -159,10 +169,16 @@ public sealed class SemanticRerankFusion(
 /// </para>
 /// <para>
 /// This is the strategy to reach for first. It is cheaper than reranking as a second pass, needs no
-/// corpus statistics, no normalization and no assumption about score comparability, and it produces
-/// the same 2x50 candidate depth described on <see cref="SemanticRerankFusion"/>. Its one
+/// corpus statistics, no normalization and no assumption about score comparability. Its one
 /// requirement is that the query was issued with the semantic ranker enabled, and it declines to
 /// guess when it was not.
+/// </para>
+/// <para>
+/// It also inherits a property of in-place semantic retrieval that is easy to miss: the reranker
+/// window is 50 documents <em>per index</em> and is not controlled by the requested result count, so
+/// two stripes put 100 documents through the cross-encoder where a single index puts 50. That is a
+/// structural consequence of splitting, not a setting — you cannot opt out of it from the client,
+/// and it is measured rather than assumed. See <c>docs/decisions.md</c>.
 /// </para>
 /// </remarks>
 public sealed class SemanticScoreFusion : IFusionStrategy

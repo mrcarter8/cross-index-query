@@ -2,7 +2,7 @@
 
 **Working document. Delete before publishing to Azure-Samples.**
 
-Last updated 2026-09-03, after the four-pattern study and the judge-agreement check.
+Last updated 2026-09-04, after the control experiments that reframed the headline claim.
 This file is the build checklist; `docs/report.md` is the deliverable.
 
 ---
@@ -19,12 +19,12 @@ This file is the build checklist; `docs/report.md` is the deliverable.
 | Corpus statistics | **done** | per split: genre + 5 temporal cuts; carries per-stripe avgdl |
 | Index schemas + router | **done** | Random, Genre, **Temporal** routing, all run live |
 | Retrieval | **done** | run live across 6 index configurations |
-| Fusion catalog | **done** | 14 strategies across all four patterns |
+| Fusion catalog | **done** | 15 strategies + 2 falsifying controls |
 | Evaluation harness | **done** | judged + fidelity metrics, pooling, cost accounting |
 | Query set | **done** | 100 committed queries, 1-7 content terms |
-| Relevance judgments | **done** | 6,853 pooled pairs, graded 0-3, committed |
-| CLI | **done** | 4 commands, all exercised |
-| Offline tests | **done** | 48/48 passing |
+| Relevance judgments | **done** | 7,016 graded 0-3, committed; 2nd judge set committed too |
+| CLI | **done** | 5 commands; `compare` re-runs the statistics offline |
+| Offline tests | **done** | 79/79 passing, incl. sample- and control-equivalence |
 | Infrastructure | **done** | azd + Bicep, server-side validated `Succeeded` |
 | Pattern 1 query-only | **measured** | both scenarios, all three modes |
 | Pattern 2 external rerank | **built**, measuring | `ExternalRerankFusion`, ~24 s/query |
@@ -32,7 +32,9 @@ This file is the build checklist; `docs/report.md` is the deliverable.
 | Pattern 4 agentic retrieval | **built**, measuring | knowledge base over both stripes |
 | Report | **drafted** | `docs/report.md` |
 | Samples | **done** | `samples/`, one per pattern |
-| README | not started | report supersedes most of it |
+| README | **done** | problem framing, worked example, diagram |
+| Significance testing | **done** | bootstrap CI + t + Wilcoxon + Holm, in-tool |
+| Controls | **done** | `local-bm25`, `single-index-rescored`, exhaustive KNN |
 
 ---
 
@@ -299,3 +301,56 @@ a public Azure-Samples repository, fold the durable parts of `decisions.md` into
 was actually found. Several of its hypotheses were refuted — notably the expectation that damage
 concentrates in cross-stripe queries, and the framing of the 2x50 semantic effect. Read it as a
 record of the original plan, not as a description of the system.
+
+---
+
+## Step 9 — control experiments (2026-09-04) — **done**
+
+Added because the study's largest claim had never been attacked by anything capable of refuting it.
+
+- [x] **`local-bm25`** — same tokenizer, constants, fields and arithmetic as `global-bm25`; only the
+      statistics source differs. Isolates "global statistics" from "client-side rescoring".
+- [x] **`single-index-rescored`** — the identical `global-bm25` instance applied to the single
+      index's own results. The only arm in the study that differs from a striped arm in the split
+      alone.
+- [x] **Result: the +0.096 headline was 95% rescorer.** Striping-attributable effect is +0.005,
+      p=0.28, interval spanning zero. The "striping can beat a single index" claim is withdrawn;
+      "striping is free when you merge on recomputed scores" replaces it. See `docs/decisions.md`.
+- [x] **Exhaustive KNN** — proved vector striping is *exactly* free (fidelity 1.000, recall 1.000),
+      and that the 0.974 seen under HNSW is approximate-search error, not a striping cost.
+- [x] `ControlEquivalenceTests` pins the one-variable property so a later edit cannot silently
+      introduce a second difference and invalidate the decomposition.
+
+## Step 10 — statistics moved into the tool — **done**
+
+Previously computed ad hoc in PowerShell, which is neither reproducible nor reviewable.
+
+- [x] `SignificanceTests` — paired bootstrap CI (10,000 resamples, fixed seed), paired t, Wilcoxon
+      signed-rank with tie correction, Holm step-down correction.
+- [x] Pinned against R reference values (`t.test`, `p.adjust`) in `SignificanceTestsTests`.
+- [x] Results markdown now carries a significance table with intervals, effect sizes, corrected
+      p-values and win/loss/tie counts.
+- [x] `cli compare` re-runs any pairwise test against the committed CSVs — **no Azure access
+      required**, so a sceptical reader can verify every claim for free.
+
+## Step 11 — bugs found while hardening
+
+- [x] **Results files could silently destroy each other.** Filenames encoded only split and tier, so
+      two runs differing in `--modes` collided. Observed live: a hybrid run overwrote the keyword
+      results. Mode suffix added; full sweeps keep the short name.
+- [x] **Judgment pool was replaced rather than unioned**, so a mode-limited run discarded documents a
+      previous run had pooled, lowering coverage and biasing comparisons.
+- [x] **`IndexProvisioner`'s 207 handler was unreachable.** `UploadDocumentsAsync` defaults
+      `ThrowOnAnyError` to false, so partial failure returns per-document results instead of
+      throwing; the catch could never fire and `pending` was never narrowed. One throttled document
+      would abort a 10,000-document load. Now inspects `result.Results`, resends only transient
+      failures, and fails fast on genuinely malformed documents.
+
+## Step 12 — remaining
+
+- [ ] Re-run the temporal (scale-striping) sweeps under the current code. Their committed results
+      predate the RBO fix, the significance table and the controls.
+- [ ] Re-run the semantic tier for the same reason.
+- [ ] Push the corrected report, README and results to `mrcarter8/cross-index-query`.
+- [ ] Delete the abandoned private `mcarter_microsoft/cross-index-query` repo (needs a token with
+      `delete_repo`; must be done by hand).

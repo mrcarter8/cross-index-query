@@ -1,6 +1,7 @@
 using System.CommandLine;
 using CrossIndexQuery.Cli.Commands;
 using CrossIndexQuery.Core.Configuration;
+using CrossIndexQuery.Core.Evaluation;
 using CrossIndexQuery.Core.Retrieval;
 
 // Three indexes, one result set. This CLI is the front door to the sample: 'init' builds the
@@ -23,12 +24,22 @@ var skipOracleOption = new Option<bool>("--skip-oracle")
         + "a baseline that is already built.",
 };
 
+var knowledgeBaseOnlyOption = new Option<bool>("--knowledge-base-only")
+{
+    Description = "Register only the agentic-retrieval knowledge base. Skips the corpus upload, "
+        + "which is what you want when the indexes are already built.",
+};
+
 var init = new Command("init", "Create the two stripe indexes plus the oracle, and load the corpus.");
 init.Options.Add(recreateOption);
 init.Options.Add(skipOracleOption);
+init.Options.Add(knowledgeBaseOnlyOption);
 init.SetAction((parse, ct) =>
     new InitCommand(options).RunAsync(
-        parse.GetValue(recreateOption), parse.GetValue(skipOracleOption), ct));
+        parse.GetValue(recreateOption),
+        parse.GetValue(skipOracleOption),
+        parse.GetValue(knowledgeBaseOnlyOption),
+        ct));
 root.Subcommands.Add(init);
 
 // ---- query ----------------------------------------------------------------------------------
@@ -107,5 +118,55 @@ var doctor = new Command(
     "Verify the service, indexes, embedding model, and query features before running anything.");
 doctor.SetAction((_, ct) => new DoctorCommand(options).RunAsync(ct));
 root.Subcommands.Add(doctor);
+
+// ---- compare --------------------------------------------------------------------------------
+// Offline and free. Everything it needs is committed, so a sceptical reader can re-run any
+// pairwise test in this study without an Azure subscription.
+var resultsOption = new Option<string>("--results")
+{
+    Description = "Results CSV written by evaluate.",
+    Required = true,
+};
+
+var baselineOption = new Option<string>("--baseline")
+{
+    Description = "Strategy to treat as the reference.",
+    DefaultValueFactory = _ => EvaluationHarness.SingleIndexBaseline,
+};
+
+var candidateOption = new Option<string>("--candidate")
+{
+    Description = "Strategy to measure against the baseline.",
+    Required = true,
+};
+
+var metricOption = new Option<string>("--metric")
+{
+    Description = "Column to compare. judgedNdcg is absolute relevance; ndcg is fidelity to the "
+        + "single index.",
+    DefaultValueFactory = _ => "judgedNdcg",
+};
+
+var compareModeOption = new Option<string?>("--mode")
+{
+    Description = "Restrict to one retrieval mode. Defaults to every mode in the file.",
+};
+
+var compare = new Command(
+    "compare",
+    "Paired significance test between two strategies in a results file. Needs no Azure access.");
+compare.Options.Add(resultsOption);
+compare.Options.Add(baselineOption);
+compare.Options.Add(candidateOption);
+compare.Options.Add(metricOption);
+compare.Options.Add(compareModeOption);
+compare.SetAction((parse, ct) => new CompareCommand().RunAsync(
+    parse.GetValue(resultsOption)!,
+    parse.GetValue(baselineOption)!,
+    parse.GetValue(candidateOption)!,
+    parse.GetValue(metricOption)!,
+    parse.GetValue(compareModeOption),
+    ct));
+root.Subcommands.Add(compare);
 
 return await root.Parse(args).InvokeAsync().ConfigureAwait(false);

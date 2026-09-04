@@ -52,7 +52,13 @@ public sealed class GlobalBm25Fusion(CorpusStatistics statistics) : IFusionStrat
     /// <summary>Length-normalization strength, again the Lucene default.</summary>
     private const double B = 0.75;
 
-    public string Name => "global-bm25";
+    public string Name => StrategyName;
+
+    /// <summary>
+    /// Registered name, referenced by the evaluation harness so the rescored-baseline control uses
+    /// this exact strategy rather than a second copy of it that could drift.
+    /// </summary>
+    public const string StrategyName = "global-bm25";
 
     public string Description =>
         "Recompute BM25 client-side over the merged pool using global corpus statistics.";

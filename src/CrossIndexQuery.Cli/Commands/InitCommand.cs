@@ -18,10 +18,24 @@ namespace CrossIndexQuery.Cli.Commands;
 /// </remarks>
 public sealed class InitCommand(CrossIndexOptions options)
 {
-    public async Task<int> RunAsync(bool recreate, bool skipOracle = false, CancellationToken cancellationToken = default)
+    public async Task<int> RunAsync(
+        bool recreate,
+        bool skipOracle = false,
+        bool knowledgeBaseOnly = false,
+        CancellationToken cancellationToken = default)
     {
         string dataDirectory = RepositoryLocator.ResolveDataDirectory(options.Corpus.DataDirectory);
         string corpusPath = Path.Combine(dataDirectory, CorpusFile.FileName);
+
+        // The knowledge base points at indexes that already exist, so re-pointing it needs none of
+        // the corpus work below. Worth a dedicated path because the alternative — a full init —
+        // re-uploads 10,000 documents, and bulk upload throttles subsequent queries into 503s for
+        // several minutes on serverless. Paying that to create one small resource is a bad trade.
+        if (knowledgeBaseOnly)
+        {
+            return await CreateKnowledgeBaseAsync(
+                new SearchClientFactory(options.Search), cancellationToken).ConfigureAwait(false);
+        }
 
         if (!File.Exists(corpusPath))
         {
@@ -81,18 +95,7 @@ public sealed class InitCommand(CrossIndexOptions options)
         // Agentic retrieval queries a knowledge base rather than the indexes directly, so the
         // sources have to be re-pointed whenever the stripes change or it silently keeps answering
         // from the previous configuration.
-        try
-        {
-            Console.WriteLine("Registering knowledge sources...");
-            await new KnowledgeBaseProvisioner(factory, options)
-                .CreateAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (RequestFailedException ex)
-        {
-            Console.Error.WriteLine(
-                $"  knowledge base setup failed ({ex.Status}): {ex.Message}");
-            Console.Error.WriteLine("  agentic retrieval will be unavailable; everything else still works.");
-        }
+        await CreateKnowledgeBaseAsync(factory, cancellationToken).ConfigureAwait(false);
 
         Console.WriteLine();
         Console.WriteLine($"  {options.Search.StripeAIndex}: {summary.StripeA:N0}");
@@ -129,6 +132,38 @@ public sealed class InitCommand(CrossIndexOptions options)
             {
                 Console.Error.WriteLine($"  {indexName}: count failed ({ex.Status}) {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// Registers the knowledge base that agentic retrieval queries.
+    /// </summary>
+    /// <remarks>
+    /// Failure is reported and swallowed. Agentic retrieval is one strategy out of fifteen, and it
+    /// depends on a preview feature that is not available in every region or on every tier — letting
+    /// that take down index provisioning would make the whole sample unusable wherever the feature
+    /// is absent.
+    /// </remarks>
+    private async Task<int> CreateKnowledgeBaseAsync(
+        SearchClientFactory factory,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            Console.WriteLine("Registering knowledge sources...");
+            await new KnowledgeBaseProvisioner(factory, options)
+                .CreateAsync(cancellationToken).ConfigureAwait(false);
+
+            Console.WriteLine($"  {options.Search.KnowledgeBaseName} ready.");
+            return 0;
+        }
+        catch (RequestFailedException ex)
+        {
+            Console.Error.WriteLine(
+                $"  knowledge base setup failed ({ex.Status}): {ex.Message}");
+            Console.Error.WriteLine(
+                "  agentic retrieval will be unavailable; everything else still works.");
+            return 0;
         }
     }
 

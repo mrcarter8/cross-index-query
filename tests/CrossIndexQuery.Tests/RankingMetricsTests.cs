@@ -89,8 +89,27 @@ public sealed class RankingMetricsTests
     [Fact]
     public void RankBiasedOverlap_IsOneForIdenticalListsAndZeroForDisjoint()
     {
-        Assert.Equal(1.0, RankingMetrics.RankBiasedOverlap(Ideal, Ideal), precision: 6);
-        Assert.Equal(0.0, RankingMetrics.RankBiasedOverlap(["v", "w", "x", "y", "z"], Ideal), precision: 6);
+        Assert.Equal(1.0, RankingMetrics.RankBiasedOverlap(Ideal, Ideal, 5), precision: 6);
+        Assert.Equal(0.0, RankingMetrics.RankBiasedOverlap(["v", "w", "x", "y", "z"], Ideal, 5), precision: 6);
+    }
+
+    /// <summary>
+    /// A candidate that reproduces the reference's first k exactly must score 1, even when the
+    /// reference is retained deeper than k.
+    /// </summary>
+    /// <remarks>
+    /// The oracle is kept to a greater depth than the fused list is returned at, so without
+    /// truncating both sides to a common k this compares a ten-item list against a fifty-item one
+    /// and charges the candidate for the forty positions it was never asked to fill. That scored a
+    /// perfect result at 0.859 against a baseline of 1.000 — enough to reorder strategies.
+    /// </remarks>
+    [Fact]
+    public void RankBiasedOverlap_IsOneWhenTheCandidateMatchesTheReferencePrefix()
+    {
+        string[] deepReference = [.. Enumerable.Range(0, 50).Select(i => $"doc{i}")];
+        string[] perfectTopTen = [.. deepReference.Take(10)];
+
+        Assert.Equal(1.0, RankingMetrics.RankBiasedOverlap(perfectTopTen, deepReference, 10), precision: 6);
     }
 
     /// <summary>
@@ -104,8 +123,8 @@ public sealed class RankingMetricsTests
     [Fact]
     public void RankBiasedOverlap_PenalisesDisagreementAtTheTopMore()
     {
-        double topDiffers = RankingMetrics.RankBiasedOverlap(["x", "b", "c", "d", "e"], Ideal);
-        double tailDiffers = RankingMetrics.RankBiasedOverlap(["a", "b", "c", "d", "x"], Ideal);
+        double topDiffers = RankingMetrics.RankBiasedOverlap(["x", "b", "c", "d", "e"], Ideal, 5);
+        double tailDiffers = RankingMetrics.RankBiasedOverlap(["a", "b", "c", "d", "x"], Ideal, 5);
 
         Assert.True(topDiffers < tailDiffers);
     }
@@ -124,11 +143,11 @@ public sealed class RankingMetricsTests
     {
         Assert.Equal(0.0, RankingMetrics.NormalizedDiscountedCumulativeGain([], Ideal, 5));
         Assert.Equal(0.0, RankingMetrics.RecallAtK([], Ideal, 5));
-        Assert.Equal(0.0, RankingMetrics.RankBiasedOverlap([], Ideal));
+        Assert.Equal(0.0, RankingMetrics.RankBiasedOverlap([], Ideal, 5));
 
         // Two empty sets are trivially identical, so both similarity measures return 1 rather than
         // the 0/0 the definitions would otherwise produce.
         Assert.Equal(1.0, RankingMetrics.JaccardAtK([], [], 5));
-        Assert.Equal(1.0, RankingMetrics.RankBiasedOverlap([], []));
+        Assert.Equal(1.0, RankingMetrics.RankBiasedOverlap([], [], 5));
     }
 }

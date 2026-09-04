@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The samples are compiled, deliberately.
+
+    Sample code that is never built rots silently: an SDK change or a careless edit leaves it
+    plausible-looking and wrong, and the reader who pastes it is the one who finds out. Building it
+    here means `dotnet build` fails the moment a sample stops being valid, which is the only way to
+    keep "paste this into your code" an honest instruction.
+
+    It produces a library rather than an executable because each file is a self-contained excerpt
+    showing one merge pattern, not a runnable program. To see the patterns actually execute against
+    a live service, use the CLI query command with an explicit strategy.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.OpenAI" />
+    <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Azure.Search.Documents" />
+  </ItemGroup>
+
+</Project>
