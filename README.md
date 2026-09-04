@@ -8,68 +8,115 @@ products:
 - azure-ai-search
 - azure-openai
 urlFragment: cross-index-query
-name: Cross-index query — what splitting your index costs you, measured
+name: Techniques for cross-index query optimization
 description: |
-  Measures the relevance cost of splitting one corpus across multiple Azure AI Search indexes, and
-  compares four patterns for merging the results — from free client-side arithmetic to agentic
-  retrieval.
+  Measures what it costs to split one corpus across multiple Azure AI Search indexes, and compares
+  four ways to merge the results — from free client-side arithmetic to agentic retrieval.
 ---
 
-# Cross-Index Query
+# Techniques for Cross-Index Query Optimization
 
-**You split one search corpus across two indexes. What does it cost you, and how do you get it
-back?**
+Sometimes data can't all live in one index. The corpus outgrows a single index. EU records have to
+stay in the EU. Each tenant gets its own index for isolation. Two systems merged and the
+consolidation project hasn't been funded yet.
 
-This repository answers that with measurements rather than assertions: 10,000 documents, 100
-queries, 6,805 relevance judgments graded by two independent models, and every number reproducible
-from committed data.
+Whatever the reason, you end up with one logical body of content spread across two Azure AI Search
+indexes — sometimes in two services or two regions — and users who still expect one ranked list.
+
+**An Azure AI Search query targets a single index.** So the way to search a corpus that spans two of
+them is to send the query to each, get two result sets back, and merge them into one. That merge is
+what this repository is about: how much relevance it costs, which merging strategies get it back,
+and what each one costs in latency, extra queries, and billing.
+
+Every number here comes from a reproducible experiment — 10,000 documents, 100 queries, 6,805
+relevance judgments graded by two independent models — with the per-query data committed alongside
+the code.
+
+### The common concerns
+
+Relevance will be worse. Paging won't work. Result counts will be wrong. Two queries means twice the
+cost. And you'll probably need a reranker.
+
+Relevance is the big one, and it's usually stated as a certainty. It deserves a number instead. This
+study measures relevance and cost. It does not solve paging or counts, and [Part 5](#part-5--what-this-does-and-doesnt-answer)
+says so plainly.
+
+### What actually breaks
+
+Splitting the data does nothing to the data. Each index ranks its own contents correctly.
+
+The problem shows up when you combine the two lists, because **a BM25 score isn't a property of the
+document — it's a property of the document relative to everything else in that index.** Two indexes
+with different vocabularies score on different scales, and sorting the merged list by score quietly
+favors whichever index knows *least* about your query.
+
+Vector similarity has none of this problem. If your workload is vector-only, splitting is free, and
+the measurements here confirm it exactly.
+
+### Where we land
+
+- **Rank fusion (RRF) — the usual advice for merging incomparable scores — is the worst option
+  measured.** It loses four to five times more than the naive score merge everyone worries about.
+- **The naive score merge is a smaller problem than its reputation.** Real and negative, but small.
+- **The fix is arithmetic.** A statistics file built once offline lets you correct or recompute
+  scores client-side, with no model, no extra queries, and no tier change. Done well, the split
+  corpus *beat* the single index on judged relevance. And if you already pay for reranking,
+  splitting costs nothing measurable.
+
+### What's in the repo
+
+Three indexes — two stripes plus a single-index baseline to measure against. Four merge patterns as
+small readable sample programs, including the wrong ways with comments explaining why. A
+`query --explain` command that shows what each index returned and how the merge transformed it.
+Three stripe modes for switching between an intentional split and a split-to-scale. And the full
+report, with significance testing and a threats-to-validity section.
+
+## → **[Read the full report](docs/report.md)**
 
 ---
 
-## Part 1 — Why would anyone split an index?
+## Part 1 — How data ends up in more than one index
 
-Almost nobody splits a search index because they want to. They do it because something forces them,
-and the reasons fall into three groups.
+Almost nobody splits a search index because they want to. Something forces it.
 
 ### It no longer fits
 
-A single Azure AI Search index has hard ceilings — **2.4 TB of storage on S3**, plus limits on
-document count, and vector indexes consume space far faster than text alone. When you hit one, there
-is no tuning your way out. The corpus has to live in more than one index.
+A single index has hard ceilings — **2.4 TB of storage on S3**, plus limits on document count. Vector
+indexes eat that space far faster than text alone. When you hit one, there's no tuning your way out.
 
-This is the scenario that has no workaround, and it is the one this study is built around.
+This is the scenario with no workaround, and it's the one this study is built around.
 
 ### The business requires it
 
-| driver | why it forces a split |
+| scenario | why one index won't do |
 | --- | --- |
-| **Data residency** | EU records must stay in the EU. That is a legal boundary, not a design preference, and one index cannot straddle it. |
-| **Multi-tenancy** | One index per customer gives clean isolation, clean deletion, and a blast radius of one tenant. Many SaaS products are built this way from day one. |
-| **Security boundaries** | If two document populations have genuinely different access rules, keeping them physically apart is easier to defend than trusting a filter on every query. |
-| **Right to be forgotten** | Deleting a tenant is dropping an index, not a long-running delete-by-query across a shared one. |
+| **Data residency** | EU records stay in the EU. That's a legal boundary, not a design preference, and one index can't straddle it. |
+| **Multi-tenancy** | An index per customer gives clean isolation, clean deletion, and a blast radius of one tenant. |
+| **Security boundaries** | When two document populations have genuinely different access rules, keeping them physically apart is easier to defend than trusting a filter on every query. |
+| **Right to be forgotten** | Offboarding a tenant is dropping an index — not a long-running delete-by-query against a shared one. |
 
 ### Operations make it the sane choice
 
-| driver | why it forces a split |
+| scenario | why one index won't do |
 | --- | --- |
-| **Different update cadences** | Live inventory changes by the minute; the ten-year archive never changes. Reindexing them together means the archive's rebuild time governs how fresh your hot data can be. |
-| **Different schemas** | A CRM holds contacts, cases, opportunities and attachments. Forcing four shapes into one schema produces a wide, sparse index that serves none of them well. |
+| **Different update cadences** | Live inventory changes by the minute; the ten-year archive never changes. Reindex them together and the archive's rebuild time governs how fresh your hot data can be. |
+| **Different schemas** | A CRM holds contacts, cases, opportunities, and attachments. Force four shapes into one schema and you get a wide, sparse index that serves none of them well. |
 | **Cost tiering** | Recent data on a fast tier, archive on a cheap one. |
 | **Independent rebuilds** | Reindex one slice without risking the others. |
-| **Mergers and migrations** | Two systems came together and consolidating the indexes is a project nobody has funded yet. |
+| **Mergers and migrations** | Two systems came together. Consolidating the indexes is a project nobody has funded. |
 
-### Two shapes, and they behave differently
+### Two shapes, and they fail differently
 
-However you arrive, you land in one of two situations — and this distinction matters more than it
-appears, because they fail in different ways and want different fixes:
+However you get there, you land in one of two situations. The distinction matters more than it
+looks, because they break in different ways and want different fixes.
 
-**A. Intentional striping.** You planned the split along a business axis: entity type, tenant,
+**A. Intentional striping.** You planned the split along a business axis — entity type, tenant,
 product line, region. The indexes end up **similar in size** but **different in vocabulary**. A
-contacts index and an attachments index simply do not talk about the same things.
+contacts index and an attachments index don't talk about the same things.
 
 **B. Striping to scale.** You hit the ceiling, froze the full index, and pointed new writes at a new
-one. The vocabulary drifts only slowly, but the sizes are **wildly unequal** — and that ratio moves
-every day as the new index fills.
+one. Vocabulary drifts slowly, but the sizes are **wildly unequal** — and that ratio moves every day
+as the new index fills.
 
 ```mermaid
 flowchart LR
@@ -83,70 +130,53 @@ flowchart LR
     end
 ```
 
----
+Both are measured here. You switch between them with one environment variable.
 
-## Part 2 — What everybody worries about
+### If the indexes are in different services
 
-Raise index splitting with a search team and you get the same list every time:
-
-> *"Relevance is just going to be worse. There's no way around it."*
-
-> *"How do I even paginate? Page 3 of a merged list isn't page 3 of anything."*
-
-> *"My result counts will be wrong."*
-
-> *"Two queries means twice the latency and twice the bill."*
-
-> *"Do I now need a reranker — and do I have to pay for one?"*
-
-The first is the big one, and it is usually stated as a certainty rather than a question. **It
-deserves a number, not a shrug.** The rest are real too, and Part 7 says which of them this study
-answers and which it does not.
+Everything above still applies, plus three things. Latency becomes the slower of two round trips
+rather than two calls to the same front door. Compute is billed separately per service. And
+**agentic retrieval is off the table** — a knowledge base references indexes within one service, so
+[pattern 4](#part-4--the-four-ways-to-merge) needs them co-located. Patterns 1 through 3 work across
+services unchanged.
 
 ---
 
-## Part 3 — What actually goes wrong
+## Part 2 — What actually goes wrong
 
-Here is the thing that surprises people: the damage is not caused by splitting your data. Your
-documents are unchanged, and each index ranks its own contents perfectly well.
+The mechanism, then a worked example from this repository's own data.
 
-**The damage happens in the merge.**
+### The score measures the neighborhood, not the document
 
-### The score is not a measure of the document
-
-When you run a keyword query, Azure AI Search returns `@search.score` — a BM25 score. It is
-tempting to read that as *"how good this document is."* It isn't. It is **how good this document is
-relative to the other documents in that index**, and one term dominates that relationship:
+A BM25 score leans heavily on one quantity:
 
 > **Inverse document frequency** — how *rare* a term is. Rare terms are informative and score high.
 > Common terms are uninformative and score low.
 
-Rarity is measured against the documents in that index and nowhere else. So the moment you split a
-corpus, each index develops its own private opinion about what is rare — and identical documents
-start receiving different scores based on nothing but where they live.
+Rarity is measured against the documents in that index and nowhere else. Split a corpus and each
+index develops its own private opinion about what's rare. Identical documents start getting
+different scores based on nothing but where they live.
 
-### A worked example, from this repository's own data
+### A worked example: searching for `love`
 
-Take the single most ordinary query imaginable: **`love`**.
+Take the most ordinary query imaginable. Our corpus is split by genre — stripe A holds fantasy,
+sci-fi, horror, mystery, thriller, YA, children's, and graphic novels; stripe B holds literary
+fiction, romance, historical fiction, biography, philosophy, history, self-help, humor, business,
+poetry, and travel.
 
-Our corpus is split by genre. Stripe A holds fantasy, science fiction, horror, mystery, thriller,
-young adult, children's and graphic novels. Stripe B holds literary fiction, romance, historical
-fiction, biography, philosophy, history, self-help, humour, business, poetry and travel.
-
-Now count where the word "love" appears:
+Count where the word "love" actually appears:
 
 | index | documents | contain "love" | proportion | **IDF("love")** |
 | --- | ---: | ---: | ---: | ---: |
-| **Stripe A** (fantasy, sci-fi, horror…) | 5,292 | 621 | **11.7%** | **2.142** |
-| **Stripe B** (romance, literary fiction…) | 4,708 | 1,067 | **22.7%** | **1.484** |
+| **Stripe A** — fantasy, sci-fi, horror… | 5,292 | 621 | **11.7%** | **2.142** |
+| **Stripe B** — romance, literary fiction… | 4,708 | 1,067 | **22.7%** | **1.484** |
 | *whole corpus* | *10,000* | *1,688* | *16.9%* | *1.779* |
 
-Stripe B is full of romance and literary fiction, so "love" is ordinary there — and BM25 correctly
-concludes that, *within stripe B*, the word tells you little. Stripe A finds it rarer and treats it
-as more informative.
+Stripe B is full of romance, so "love" is ordinary there. BM25 correctly concludes that *within
+stripe B* the word tells you little — and scores every stripe B document about 30% lower for exactly
+the same match.
 
-The result is that **every stripe B document is scored roughly 30% lower for exactly the same
-match.** Watch what the two indexes return:
+Watch what comes back:
 
 <table>
 <tr><th>Stripe A — top 5</th><th>Stripe B — top 5</th></tr>
@@ -173,12 +203,11 @@ match.** Watch what the two indexes return:
 </td></tr>
 </table>
 
-Every score in the left column beats every score in the right column. So if you merge by sorting on
-score — the obvious thing, and the thing most people write first — **you get ten results from
-stripe A and none at all from stripe B.**
+Every score on the left beats every score on the right. Sort the merged list by score — the obvious
+thing, and the thing most people write first — and **you get ten results from stripe A and none at
+all from stripe B.**
 
-Now compare that against what a single index holding all 10,000 documents returns for the same
-query:
+Here's what a single index holding all 10,000 documents returns for the same query:
 
 | # | single-index top 10 for `love` | judged relevance |
 | --- | --- | :---: |
@@ -193,25 +222,23 @@ query:
 | 9 | Conquer Your Love | **3** |
 | 10 | Ugly Love | **3** |
 
-**Nine of the single index's ten best results are the documents naive merging threw away.**
-Meanwhile the naive merge puts *Loves Music, Loves to Dance* — graded **1** — at position 1, and
-fills the rest with titles like *Guess How Much I Love You*, a children's board book.
+**Nine of the ten best results are the documents naive merging threw away.** In their place it puts
+*Loves Music, Loves to Dance* — graded **1** — at position 1, and fills the rest with titles like
+*Guess How Much I Love You*, a children's board book.
 
-Measured on judged relevance: **naive merge 0.66, single index 0.94.**
+Judged relevance: **naive merge 0.66, single index 0.94.**
 
-And the fixes in Part 4? On this query, both score a **perfect 1.00** — they recover every one of
-stripe B's documents *and* order them better than the single index did, because they can see
-candidates from both halves of the corpus at once.
+And the fixes? On this query both score a **perfect 1.00** — recovering every one of stripe B's
+documents *and* ordering them better than the single index managed, because they can see candidates
+from both halves of the corpus at once.
 
-### The generalisation
+### The generalization
 
-That example contains the whole problem in miniature:
-
-> **Naive score merging is biased toward whichever index knows *least* about your query.**
+> **Naive score merging is biased toward whichever index knows least about your query.**
 
 The index with fewer matching documents thinks your term is rarer, scores it higher, and wins the
-merge. It is not surfacing better documents — it is surfacing documents from the index with less
-competition. The more specialised your split, the stronger the bias.
+merge. It isn't surfacing better documents — it's surfacing documents that had less competition. The
+more specialized your split, the stronger the bias.
 
 ```mermaid
 flowchart TB
@@ -221,40 +248,32 @@ flowchart TB
     B --> BS["scores <b>8.3 – 8.7</b>"]
     AS --> M{"Sort merged list<br/>by raw score"}
     BS --> M
-    M --> R["<b>All 10 results from stripe A</b><br/>The best 'love' books are<br/>excluded — they were<br/>scored on a different scale"]
+    M --> R["<b>All 10 results from stripe A</b><br/>The best 'love' books are<br/>excluded — they were scored<br/>on a different scale"]
 ```
 
-### It is not only IDF
+### Three more things break the same way
 
-Three more things break in the same way, and they are worth knowing before you debug the wrong one:
+- **Average document length.** BM25 normalizes by how long a document is *relative to the average in
+  that index*. Split contacts (40 words) from attachments (4,000 words) and the two disagree about
+  what "long" means. Our corpus has uniform lengths, so this barely registers here — **in a real
+  heterogeneous corpus it may matter more than the IDF effect.**
+- **Hybrid scores are already fused.** A hybrid query returns an RRF score computed inside one index.
+  The underlying magnitudes are gone, so you can't correctly re-fuse across indexes. Hybrid is the
+  worst mode for naive merging — which catches people out, because hybrid is what most of them run.
+- **Paging and counts genuinely don't compose.** Page 3 of a merged list isn't page 3 of either
+  index. This study doesn't solve that; see [Part 5](#part-5--what-this-does-and-doesnt-answer).
 
-- **Average document length.** BM25 normalises by how long a document is *relative to the average
-  in that index*. Split contacts (40 words) from attachments (4,000 words) and the two indexes
-  disagree about what "long" means. Our corpus has uniform document lengths so this effect is small
-  here — **in a real heterogeneous corpus it may be larger than the IDF effect.**
-- **Hybrid scores are already fused.** A hybrid query returns a *Reciprocal Rank Fusion* score
-  computed inside one index. The underlying magnitudes are gone, so you cannot correctly re-fuse
-  them across indexes. Hybrid is the worst mode for naive merging, which surprises people because
-  hybrid is what most of them run.
-- **Paging and counts genuinely do not compose.** Page 3 of a merged list is not page 3 of either
-  index, and `@odata.count` from two indexes cannot simply be added if the ranking is global. These
-  are real problems and this study does **not** solve them; see Part 7.
-
-### What is *not* affected
+### What isn't affected
 
 **Vector search has none of this.** Cosine similarity is a property of two vectors — the query's and
-the document's. No corpus statistics enter into it, so a similarity of 0.83 means the same thing in
-every index.
+the document's. No corpus statistics enter into it, so 0.83 means the same thing in every index.
 
 We measured merged vector results against a single index at **Kendall τ = 1.000 on every one of the
-100 queries** — not an average, an exact rank match every time. If your workload is vector-only,
-splitting your index is free, and you can stop reading.
+100 queries.** Not an average — an exact rank match, every time.
 
 ---
 
-## Part 4 — So how much does it actually cost?
-
-Here is where the common wisdom turns out to be half right.
+## Part 3 — What it costs, and what gets it back
 
 | what you do when merging | keyword nDCG vs a single index | |
 | --- | ---: | --- |
@@ -265,125 +284,107 @@ Here is where the common wisdom turns out to be half right.
 | **Rerank** on either side | **parity** | costs nothing extra |
 | **Vector-only** workloads | **parity** (τ = 1.000) | exactly free |
 
-Ranges span two independent judges; **26 of 27 conclusions were identical under both**.
+Ranges span two independent judges. **26 of 27 conclusions were identical under both.**
 
-Three things stand out, and the first is the one most likely to change what you do:
+**Rank fusion is the worst thing you can do, and it's the standard advice.** RRF gets recommended for
+cross-index merging precisely because it sidesteps incomparable scales — by throwing the scores away.
+But a rank says nothing about how many documents it was drawn from: rank 1 of 19 ties rank 1 of
+9,981. It loses four to five times more than the naive merge, and it fails in vector mode too, where
+the scores were already perfectly comparable.
 
-**Rank fusion is the worst thing you can do, and it is the standard advice.** Reciprocal Rank Fusion
-is what gets recommended for merging across indexes, precisely because it sidesteps incomparable
-score scales by throwing the scores away. But a rank carries no information about how many documents
-it was drawn from — rank 1 of 19 documents ties rank 1 of 9,981. It loses **four to five times more**
-than the naive merge everyone worries about, and it fails in vector mode too, where there was
-nothing wrong with the scores to begin with.
+**The naive merge is smaller than its reputation.** Directionally negative, and right at the edge of
+what this study can resolve — one of the two judges scored it as indistinguishable from not
+splitting at all. Fix it because the fix is free, not because it's an emergency.
 
-**The naive merge is a smaller problem than its reputation.** Real, directionally negative, and at
-the edge of what this study can resolve — one of the two judges scored it as indistinguishable from
-not splitting at all. Worth fixing because the fix is free, not because it is an emergency.
+**The repairs can beat a single index.** Recomputing BM25 client-side scored **+0.096** above the
+un-split baseline, winning on 74 of 100 queries.
 
-**The fixes are arithmetic, and they can beat a single index.** Both repairs use a small statistics
-file you build once offline. No model, no extra queries, no tier upgrade — and recomputing BM25
-client-side scored **+0.096 above** the un-split baseline, winning on 74 of 100 queries.
-
-> **Why can splitting ever beat *not* splitting?** Not because the scoring improved — it is the same
-> BM25 on both sides. It is candidate selection. A single index spends its top-50 on whatever scores
+> **Why would splitting ever beat *not* splitting?** Not because the scoring improved — it's the same
+> BM25 on both sides. It's candidate selection. A single index spends its top-50 on whatever scores
 > highest globally, which for a broad query can be dominated by one theme. Splitting *guarantees*
 > candidate slots to each part of the corpus, and correcting the scores makes that diversity usable.
-> The effect concentrates in queries whose answers span both indexes, exactly as that explanation
+> The gain concentrates in queries whose answers span both indexes — exactly as that explanation
 > predicts.
 
-## → **[Read the full report](docs/report.md)**
-
-Method, both scenarios, all four patterns priced, per-query significance testing, and a frank
-threats-to-validity section.
-
 ---
 
-## Part 5 — How this was measured
-
-Claims about relevance are easy to make and hard to check, so here is the apparatus.
-
-**Three indexes, not two.** Two stripes, plus an **oracle** index holding all 10,000 documents. The
-oracle is the un-split baseline — without it, "how much did splitting cost?" has no answer. Identical
-schema, analyzer and vector profile across all three, so any difference is attributable to the split
-and nothing else.
-
-**Two metrics, because one is not enough.**
-
-- *Fidelity* asks **did the merged list reproduce what one index would have returned?** Right
-  question for measuring loss — but it defines the single index as correct, so a merge that surfaces
-  something genuinely better is scored as an error.
-- *Judged relevance* removes that blind spot. We pooled the top-10 from every strategy and both arms
-  into **6,805 unique (query, document) pairs** and had each graded 0–3, blind to which system
-  produced it. The single index becomes just another system, and can lose.
-
-The two disagreeing is informative in itself: client-side BM25 recomputation scores **worst but one**
-on fidelity and **best overall** on judged relevance. It departs from the single-index ranking
-substantially, and the departure is an improvement.
-
-**The judge was itself checked.** All 6,805 pairs were re-graded by a second, different model and
-every conclusion recomputed. Agreement was substantial (weighted Cohen's κ = 0.735), and 26 of 27
-conclusions held. The one that moved is flagged wherever it appears.
-
-**Significance.** Paired per-query two-sided t-tests, n=100, with win/loss counts reported alongside
-means. The raw per-query data behind every published number is committed in [`results/`](results).
-
----
-
-## Part 6 — The four ways to merge
+## Part 4 — The four ways to merge
 
 Ordered by what they cost you at query time.
 
-| # | pattern | who does the ranking | extra queries | extra bill | measured p50 |
+| # | pattern | who ranks | extra queries | extra bill | measured p50 |
 | --- | --- | --- | --- | --- | ---: |
 | **1** | [**Query only**](samples/Pattern1_QueryOnly.cs) | your code — arithmetic | none | **none** | **54 ms** |
 | **2** | [Self-rerank, external](samples/Pattern2_ExternalRerank.cs) | a model you host | none | your model | 21,792 ms |
 | **3** | [Built-in semantic ranker](samples/Pattern3_SemanticRanker.cs) | the service | none | semantic meter | 157 ms |
 | **4** | [Agentic retrieval](samples/Pattern4_AgenticRetrieval.cs) | the service, end to end | replaces yours | agentic meter | 327 ms |
 
-Each sample is a small, readable file that shows the merge itself — including the wrong ways, with
-comments explaining why they are wrong.
+Each sample is a small file showing the merge itself — including the wrong ways, with comments
+explaining why they're wrong.
 
-**Pattern 1 is the answer for most people.** It needs one precomputed statistics file and no
-query-time cost at all, and it measured *better* than not splitting.
+**Pattern 1 is the answer for most people.** One precomputed statistics file, no query-time cost, and
+it measured *better* than not splitting.
 
-**Patterns 3 and 4 reach statistical parity** with a single index (p = 0.24–0.49). If you already
-pay for reranking, splitting costs you nothing measurable — but note the reason: a cross-encoder
-scores (query, document) pairs and never consults corpus statistics, so there is nothing for a split
-corpus to distort.
+**Patterns 3 and 4 reach statistical parity** with a single index (p = 0.24–0.49). If you already pay
+for reranking, splitting costs nothing measurable — and the reason is structural: a cross-encoder
+scores (query, document) pairs and never consults corpus statistics, so a split corpus has nothing
+to distort. Pattern 4 requires both indexes in the same service.
 
 **Keep the comparison honest.** Reranking is worth about **+0.19 nDCG** on its own — an order of
 magnitude more than anything splitting does to you in either direction. It improves a single index
-by just as much, so it is never an argument *for* splitting. If relevance is your problem, that is
+by just as much, so it's never an argument *for* splitting. If relevance is your problem, that's
 where the leverage is.
 
 ---
 
-## Part 7 — What this does and does not answer
+## Part 5 — What this does and doesn't answer
 
-**Answered:** how much relevance you lose merging two indexes, which merge strategies recover it,
-what each costs in queries, compute units and latency, and how the answer changes with size
-imbalance.
+**Answered:** how much relevance you lose merging two indexes, which strategies recover it, what each
+costs in queries, compute units and latency, and how the answer shifts with size imbalance.
 
-**Not answered, and worth knowing:**
+**Not answered:**
 
-- **Paging.** Deep paging across merged indexes is a genuinely hard problem — you must over-fetch
-  from every index to guarantee a correct page *n*, and cost grows with depth. Not addressed here.
-- **Total counts.** Merged result counts are approximate once ranking is global. Not addressed here.
-- **More than two indexes.** Everything here is N=2. Rank fusion's failure should get *worse* with
-  more indexes, since each one can contribute its locally-inflated best non-answer. Untested.
+- **Paging.** Deep paging across merged indexes is genuinely hard — you must over-fetch from every
+  index to guarantee a correct page *n*, and cost grows with depth.
+- **Total counts.** Merged counts are approximate once ranking is global.
+- **More than two indexes.** Everything here is N=2. Rank fusion should get *worse* with more, since
+  each index can contribute its locally-inflated best non-answer.
 - **Real scale.** 10,000 documents, not 2.4 TB. The core distortion is scale-invariant — IDF
   divergence depends on the *ratio* of term densities, not absolute counts — but candidate-window
   effects at true scale are untested.
-- **Heterogeneous document lengths.** Our corpus is uniform, so the length-normalisation half of
-  BM25 barely diverges. A corpus split by entity type would likely see this matter more, and the
-  corrections shown here address only the IDF half.
+- **Heterogeneous document lengths.** Our corpus is uniform, so the length-normalization half of BM25
+  barely diverges. The corrections here address only the IDF half.
 - **Human relevance judgments.** Ours are model-generated, cross-checked by a second model but not by
   people. Both models share a family, so a bias common to that family would be invisible.
-- **Relevance tuning.** No scoring profiles, no field boosting. Those are orthogonal — you would
-  apply the same profile to every index — but it means these numbers describe splitting in isolation,
-  not a tuned production system.
+- **Relevance tuning.** No scoring profiles, no field boosting. Those are orthogonal — you'd apply
+  the same profile to every index — but these numbers describe splitting in isolation, not a tuned
+  production system.
 
 ---
+
+## How this was measured
+
+**Three indexes, not two.** Two stripes plus an **oracle** holding all 10,000 documents. The oracle
+is the un-split baseline — without it, "how much did splitting cost?" has no answer. Identical
+schema, analyzer, and vector profile across all three, so any difference is attributable to the
+split and nothing else.
+
+**Two metrics, because one isn't enough.** *Fidelity* asks whether the merged list reproduced what
+one index would have returned — the right question for measuring loss, but it defines the single
+index as correct, so a merge that surfaces something genuinely better is scored as an error.
+*Judged relevance* removes that blind spot: we pooled the top-10 from every strategy and both arms
+into 6,805 unique (query, document) pairs and had each graded 0–3, blind to which system produced it.
+
+The two disagreeing is informative. Client-side BM25 recomputation scores second-worst on fidelity
+and best overall on judged relevance — it departs from the single-index ranking substantially, and
+the departure is an improvement.
+
+**The judge was itself checked.** All 6,805 pairs were re-graded by a second model and every
+conclusion recomputed. Agreement was substantial (weighted Cohen's κ = 0.735), and 26 of 27
+conclusions held. The one that moved is flagged wherever it appears.
+
+**Significance.** Paired per-query two-sided t-tests, n=100, with win/loss counts alongside means.
+Raw per-query data for every published number is in [`results/`](results).
 
 ## Running it
 
@@ -405,7 +406,7 @@ dotnet run --project src/CrossIndexQuery.Cli -- evaluate            # reproduce 
 ```
 
 `query --explain` is the teaching surface — it prints what each index returned, what it scored, and
-how the merge transformed it. The `love` example in Part 3 is exactly that command's output.
+how the merge transformed it. The `love` example in Part 2 is that command's output.
 
 Switch scenarios with configuration alone:
 
@@ -443,8 +444,8 @@ committed in `data/books.enriched.json` so the sample runs without a generation 
 [goodbooks-10k](https://github.com/zygmuntz/goodbooks-10k) (CC BY-SA 4.0).
 
 Vectors are stored as base64 int8 rather than decimal text — 30 MB instead of 192 MB, at a measured
-cost of 0.10% recall@10. Read the corpus through `CorpusFile`; a bare `JsonSerializer` will not
-decode them.
+cost of 0.10% recall@10. Read the corpus through `CorpusFile`; a bare `JsonSerializer` won't decode
+them.
 
 ## Contributing
 
@@ -457,7 +458,7 @@ If you think a published number is wrong, the per-query data behind all of them 
 
 ## Licence
 
-Code, documentation and results: [MIT](LICENSE).
+Code, documentation, and results: [MIT](LICENSE).
 Data under `data/`: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), inherited from
 [goodbooks-10k](https://github.com/zygmuntz/goodbooks-10k). See [`DATA.md`](DATA.md).
 
