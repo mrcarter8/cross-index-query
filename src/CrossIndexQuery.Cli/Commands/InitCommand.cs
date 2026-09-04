@@ -56,14 +56,14 @@ public sealed class InitCommand(CrossIndexOptions options)
             return 1;
         }
 
-        if (dimensions != options.Embedding.Dimensions)
+        if (dimensions != options.Foundry.EmbeddingDimensions)
         {
             // Vectors from different models or dimensionalities occupy unrelated coordinate spaces.
             // Comparing them still produces a number, which is precisely why this has to be an
             // error rather than a warning.
             Console.Error.WriteLine(
                 $"Corpus vectors are {dimensions}-dimensional but configuration expects "
-                + $"{options.Embedding.Dimensions}. Refusing to build indexes whose vectors cannot be "
+                + $"{options.Foundry.EmbeddingDimensions}. Refusing to build indexes whose vectors cannot be "
                 + "compared.");
             return 1;
         }

@@ -13,7 +13,7 @@ public sealed class CrossIndexOptions
 
     public SearchServiceOptions Search { get; set; } = new();
 
-    public EmbeddingOptions Embedding { get; set; } = new();
+    public FoundryOptions Foundry { get; set; } = new();
 
     public CorpusOptions Corpus { get; set; } = new();
 
@@ -73,116 +73,130 @@ public sealed class SearchServiceOptions
     /// <summary>Vector profile name, identical across all three indexes.</summary>
     public string VectorProfileName { get; set; } = "books-vector-profile";
 
-    /// <summary>
-    /// Chat deployment the knowledge base uses for LLM query planning.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Empty by default, and the sample works without it. Leaving it empty forces the retrieval
-    /// engine to <c>minimal</c> reasoning effort, where the documentation is explicit that there is
-    /// "no LLM for intelligent query planning or answer synthesis" — the query goes straight to
-    /// search and ordering comes from the semantic ranker. Everything this study has measured of
-    /// agentic retrieval so far was measured in that state.
-    /// </para>
-    /// <para>
-    /// Set it to a supported chat deployment to attach a model and unlock <c>low</c> and
-    /// <c>medium</c> reasoning effort, which is where the query actually gets decomposed into
-    /// subqueries. That is the capability most likely to help short, low-context queries — the
-    /// "one company name and nothing else" case that motivates cross-index relevance work in the
-    /// first place — and it is the only option in this study's four-way framing that remains
-    /// unmeasured.
-    /// </para>
-    /// <para>
-    /// Supported models at the time of writing: <c>gpt-5</c>, <c>gpt-5-mini</c>, <c>gpt-5-nano</c>,
-    /// <c>gpt-5.1</c>, <c>gpt-5.2</c>, <c>gpt-5.4</c>, <c>gpt-5.4-mini</c>, <c>gpt-5.4-nano</c>,
-    /// <c>gpt-5.5</c> and the <c>gpt-5.6</c> family. A batch deployment will not do — query planning
-    /// is interactive, so the deployment must be a standard one.
-    /// </para>
-    /// </remarks>
-    public string KnowledgeBaseModelDeployment { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Model name behind <see cref="KnowledgeBaseModelDeployment"/>.
-    /// </summary>
-    /// <remarks>
-    /// The service validates the model, not the deployment name, against its supported list. They
-    /// are usually the same string, so this defaults to the deployment when left empty.
-    /// </remarks>
-    public string KnowledgeBaseModelName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Foundry endpoint hosting the query-planning deployment.
-    /// </summary>
-    /// <remarks>
-    /// Defaults to the embedding endpoint, since one Foundry resource normally hosts both.
-    /// </remarks>
-    public string KnowledgeBaseModelEndpoint { get; set; } = string.Empty;
-
-    /// <summary>
-    /// API key for the query-planning model.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The one place in this sample where a key may be unavoidable. Everything else authenticates
-    /// with <c>DefaultAzureCredential</c>, and role-based access is the documented recommendation
-    /// here too — but it requires the search service to have a managed identity holding
-    /// <b>Cognitive Services User</b> on the Foundry resource, and managed identity needs the
-    /// <b>Basic tier or higher</b>. A serverless search service, which is what this sample
-    /// provisions, cannot satisfy that.
-    /// </para>
-    /// <para>
-    /// So on serverless the key is the only route to query planning. On Basic or above, leave this
-    /// empty, assign the role, and no secret is needed anywhere in the sample.
-    /// </para>
-    /// </remarks>
-    public string? KnowledgeBaseModelApiKey { get; set; }
-
-    /// <summary>Whether a query-planning model has been configured.</summary>
-    public bool HasKnowledgeBaseModel =>
-        !string.IsNullOrWhiteSpace(KnowledgeBaseModelDeployment);
-
     /// <summary>All stripe index names, in stable order.</summary>
     public IReadOnlyList<string> StripeIndexes => [StripeAIndex, StripeBIndex];
 }
 
 /// <summary>
-/// Azure OpenAI settings. Embeddings are generated client-side so the exact same vector
-/// is sent to every index; see the embedding-consistency rule in the README.
+/// The Microsoft Foundry account, and the deployments on it that this sample uses.
 /// </summary>
-public sealed class EmbeddingOptions
+/// <remarks>
+/// <para>
+/// One account, one endpoint, one optional key. Every model this sample touches — embeddings, the
+/// offline batch jobs, the external reranker, and the optional query-planning model — lives on the
+/// same Foundry resource, so splitting them across several endpoint settings would invent a
+/// distinction the deployment topology does not have.
+/// </para>
+/// <para>
+/// Deployments are named for what they are rather than for the one place they happen to be used,
+/// because most of them are already used in more than one: the batch deployment writes the corpus
+/// blurbs <em>and</em> grades relevance judgments, and the chat deployment backs both the external
+/// reranking strategy and the second judge in the agreement check.
+/// </para>
+/// </remarks>
+public sealed class FoundryOptions
 {
     /// <summary>Account endpoint, e.g. <c>https://my-account.openai.azure.com/</c>.</summary>
     [Required]
     public string Endpoint { get; set; } = string.Empty;
 
-    /// <summary>Optional key. Leave empty to use <c>DefaultAzureCredential</c>.</summary>
+    /// <summary>
+    /// Account key. Leave empty to authenticate with <c>DefaultAzureCredential</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not needed for anything the sample itself calls: <c>az login</c> covers embeddings, the
+    /// batch jobs and the external reranker, and role-based access is the recommended path.
+    /// </para>
+    /// <para>
+    /// It becomes necessary for exactly one thing, and only on some tiers. When
+    /// <see cref="QueryPlanningDeployment"/> is set, the <em>search service</em> calls Foundry on
+    /// its own behalf rather than on yours, so your credential is irrelevant to that hop. The
+    /// service would normally use a managed identity holding <b>Cognitive Services User</b>, but
+    /// managed identity requires the <b>Basic tier or higher</b> — a serverless search service
+    /// cannot hold one. On serverless this key is the only route; on Basic or above, assign the
+    /// role and leave it empty.
+    /// </para>
+    /// </remarks>
     public string? ApiKey { get; set; }
 
     /// <summary>Deployment name for the embedding model.</summary>
-    public string Deployment { get; set; } = "text-embedding-3-small";
+    public string EmbeddingDeployment { get; set; } = "text-embedding-3-small";
 
     /// <summary>
     /// Model identifier recorded alongside the corpus. The preflight validator refuses to
     /// query if the indexes were built with a different model, because cross-index vector
     /// comparison is only valid within a single embedding space.
     /// </summary>
-    public string ModelName { get; set; } = "text-embedding-3-small";
+    public string EmbeddingModel { get; set; } = "text-embedding-3-small";
 
-    /// <summary>Vector dimensions produced by <see cref="Deployment"/>.</summary>
-    public int Dimensions { get; set; } = 1536;
-
-    /// <summary>Deployment used by the offline blurb-generation batch job. Not needed at query time.</summary>
-    public string? BlurbDeployment { get; set; }
+    /// <summary>Vector dimensions produced by <see cref="EmbeddingDeployment"/>.</summary>
+    public int EmbeddingDimensions { get; set; } = 1536;
 
     /// <summary>
-    /// Chat deployment used by the external reranking strategy.
+    /// A <c>GlobalBatch</c> chat deployment, used by the offline jobs.
     /// </summary>
     /// <remarks>
-    /// Deliberately a small, fast model. The external rerank pattern is characterised by paying per
+    /// Writes the corpus blurbs and grades the relevance judgments. Neither is needed to run the
+    /// sample — both outputs are committed — so this stays empty unless you are regenerating the
+    /// corpus or extending the judged set. The batch SKU is what makes those jobs affordable at
+    /// several thousand documents.
+    /// </remarks>
+    public string? BatchDeployment { get; set; }
+
+    /// <summary>
+    /// A standard chat deployment, used wherever the sample calls a model interactively.
+    /// </summary>
+    /// <remarks>
+    /// Backs the external reranking strategy and the second judge in the agreement check.
+    /// Deliberately a small, fast model: the external rerank pattern is characterised by paying per
     /// candidate at query time, so its cost profile is only representative if the model is one you
     /// would actually put in a query path.
     /// </remarks>
-    public string RerankDeployment { get; set; } = "gpt-5-nano";
+    public string ChatDeployment { get; set; } = "gpt-5-nano";
+
+    /// <summary>
+    /// A standard chat deployment attached to the knowledge base for query planning.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Empty by default, and the sample is fully functional without it. Left empty, the retrieval
+    /// engine is pinned to <c>minimal</c> reasoning effort, where the documentation is explicit
+    /// that there is "no LLM for intelligent query planning or answer synthesis" — the query goes
+    /// straight to search and ordering comes from the semantic ranker. Every agentic number this
+    /// study has published so far was measured in that state.
+    /// </para>
+    /// <para>
+    /// Setting it attaches a model and unlocks <c>low</c> and <c>medium</c> reasoning effort, which
+    /// is where a query is actually decomposed into subqueries. That is the capability most likely
+    /// to help short, low-context queries — the "one company name and nothing else" case that
+    /// motivates cross-index relevance work in the first place.
+    /// </para>
+    /// <para>
+    /// Kept separate from <see cref="ChatDeployment"/> rather than folded into it for two reasons.
+    /// Attaching a model changes what pattern 4 measures, so it has to be opt-in rather than a
+    /// side effect of configuring the reranker. And the service validates this one against a
+    /// supported-model list that the reranker is not held to: <c>gpt-5</c>, <c>gpt-5-mini</c>,
+    /// <c>gpt-5-nano</c>, <c>gpt-5.1</c>, <c>gpt-5.2</c>, <c>gpt-5.4</c>, <c>gpt-5.4-mini</c>,
+    /// <c>gpt-5.4-nano</c>, <c>gpt-5.5</c> and the <c>gpt-5.6</c> family. A batch deployment will
+    /// not do — query planning is interactive.
+    /// </para>
+    /// </remarks>
+    public string QueryPlanningDeployment { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Model name behind <see cref="QueryPlanningDeployment"/>.
+    /// </summary>
+    /// <remarks>
+    /// The service validates the model, not the deployment name, against its supported list. The
+    /// two are usually the same string, so this falls back to the deployment when left empty — but
+    /// a deployment named for its purpose rather than its model would fail validation with a
+    /// confusing message without it.
+    /// </remarks>
+    public string QueryPlanningModel { get; set; } = string.Empty;
+
+    /// <summary>Whether a query-planning model has been configured.</summary>
+    public bool HasQueryPlanningModel => !string.IsNullOrWhiteSpace(QueryPlanningDeployment);
 }
 
 /// <summary>Corpus location and how documents are divided between the two stripes.</summary>

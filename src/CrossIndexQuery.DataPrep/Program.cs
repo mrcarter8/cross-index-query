@@ -55,8 +55,8 @@ var submit = new Command("submit", "Build the JSONL request file, upload it, and
 submit.Options.Add(jobOption);
 submit.Options.Add(limitOption);
 submit.SetAction((parse, ct) => new BlurbStage(Resolve(parse, dataOption)).SubmitAsync(
-    config.Embedding.Endpoint,
-    config.Embedding.ApiKey,
+    config.Foundry.Endpoint,
+    config.Foundry.ApiKey,
     RequireBlurbDeployment(config),
     parse.GetValue(limitOption),
     parse.GetValue(jobOption)!,
@@ -66,13 +66,13 @@ blurbs.Subcommands.Add(submit);
 var status = new Command("status", "Poll a submitted batch job.");
 status.Options.Add(jobOption);
 status.SetAction((parse, ct) => new BlurbStage(Resolve(parse, dataOption)).StatusAsync(
-    config.Embedding.Endpoint, config.Embedding.ApiKey, parse.GetValue(jobOption)!, ct));
+    config.Foundry.Endpoint, config.Foundry.ApiKey, parse.GetValue(jobOption)!, ct));
 blurbs.Subcommands.Add(status);
 
 var collect = new Command("collect", "Download a completed batch and merge it into data/books.blurbs.json.");
 collect.Options.Add(jobOption);
 collect.SetAction((parse, ct) => new BlurbStage(Resolve(parse, dataOption)).CollectAsync(
-    config.Embedding.Endpoint, config.Embedding.ApiKey, parse.GetValue(jobOption)!, ct));
+    config.Foundry.Endpoint, config.Foundry.ApiKey, parse.GetValue(jobOption)!, ct));
 blurbs.Subcommands.Add(collect);
 
 root.Subcommands.Add(blurbs);
@@ -82,11 +82,11 @@ var embed = new Command(
     "embed",
     "Embed every book with one model and write data/books.enriched.json plus the manifest.");
 embed.SetAction((parse, ct) => new EmbeddingStage(Resolve(parse, dataOption)).RunAsync(
-    config.Embedding.Endpoint,
-    config.Embedding.ApiKey,
-    config.Embedding.Deployment,
-    config.Embedding.Dimensions,
-    config.Embedding.BlurbDeployment,
+    config.Foundry.Endpoint,
+    config.Foundry.ApiKey,
+    config.Foundry.EmbeddingDeployment,
+    config.Foundry.EmbeddingDimensions,
+    config.Foundry.BatchDeployment,
     ct));
 root.Subcommands.Add(embed);
 
@@ -147,7 +147,7 @@ static string Resolve(ParseResult parse, Option<string> dataOption) =>
     RepositoryLocator.ResolveDataDirectory(parse.GetValue(dataOption) ?? "data");
 
 static string RequireBlurbDeployment(CrossIndexOptions config) =>
-    string.IsNullOrWhiteSpace(config.Embedding.BlurbDeployment)
+    string.IsNullOrWhiteSpace(config.Foundry.BatchDeployment)
         ? throw new InvalidOperationException(
-            "Embedding:BlurbDeployment is not configured. Point it at a GlobalBatch chat deployment.")
-        : config.Embedding.BlurbDeployment;
+            "Foundry:BatchDeployment is not configured. Point it at a GlobalBatch chat deployment.")
+        : config.Foundry.BatchDeployment;

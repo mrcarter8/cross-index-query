@@ -162,11 +162,11 @@ public sealed class DoctorCommand(CrossIndexOptions options)
                 + string.Join(", ", dimensions.Select(kv => $"{kv.Key}={kv.Value}"))
                 + "); cross-index vector comparison is invalid");
         }
-        else if (distinct[0] != options.Embedding.Dimensions)
+        else if (distinct[0] != options.Foundry.EmbeddingDimensions)
         {
             Fail(
                 $"indexes are {distinct[0]}-dimensional but configuration expects "
-                + $"{options.Embedding.Dimensions}; query vectors will not match the corpus");
+                + $"{options.Foundry.EmbeddingDimensions}; query vectors will not match the corpus");
         }
         else
         {
@@ -208,15 +208,15 @@ public sealed class DoctorCommand(CrossIndexOptions options)
             ReadOnlyMemory<float> vector = await embedder
                 .EmbedAsync(ProbeQuery, cancellationToken).ConfigureAwait(false);
 
-            if (vector.Length != options.Embedding.Dimensions)
+            if (vector.Length != options.Foundry.EmbeddingDimensions)
             {
                 Fail(
                     $"embedding deployment returned {vector.Length} dimensions, configuration says "
-                    + $"{options.Embedding.Dimensions}");
+                    + $"{options.Foundry.EmbeddingDimensions}");
                 return null;
             }
 
-            Pass($"embedding deployment '{options.Embedding.Deployment}' returns {vector.Length} dimensions");
+            Pass($"embedding deployment '{options.Foundry.EmbeddingDeployment}' returns {vector.Length} dimensions");
             return vector;
         }
         catch (Exception ex) when (ex is RequestFailedException or InvalidOperationException)

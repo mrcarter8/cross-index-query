@@ -81,10 +81,10 @@ public sealed class JudgmentStage(string dataDirectory, string batchDirectory, s
         Dictionary<string, BookDocument> corpus = await LoadCorpusAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        string? deployment = options.Embedding.BlurbDeployment;
+        string? deployment = options.Foundry.BatchDeployment;
         if (string.IsNullOrWhiteSpace(deployment))
         {
-            Console.Error.WriteLine("Embedding:BlurbDeployment is not configured; it names the judge model.");
+            Console.Error.WriteLine("Foundry:BatchDeployment is not configured; it names the judge model.");
             return 1;
         }
 
@@ -146,7 +146,7 @@ public sealed class JudgmentStage(string dataDirectory, string batchDirectory, s
 
         Console.WriteLine($"Wrote {lines.Count:N0} judgment requests to {requestsPath}.");
 
-        using var client = new AzureOpenAiBatchClient(options.Embedding.Endpoint, options.Embedding.ApiKey);
+        using var client = new AzureOpenAiBatchClient(options.Foundry.Endpoint, options.Foundry.ApiKey);
 
         string fileId = await client.UploadAsync(requestsPath, cancellationToken).ConfigureAwait(false);
         Console.WriteLine($"Uploaded as {fileId}.");
@@ -174,7 +174,7 @@ public sealed class JudgmentStage(string dataDirectory, string batchDirectory, s
             return 1;
         }
 
-        using var client = new AzureOpenAiBatchClient(options.Embedding.Endpoint, options.Embedding.ApiKey);
+        using var client = new AzureOpenAiBatchClient(options.Foundry.Endpoint, options.Foundry.ApiKey);
         JsonNode batch = await client.GetBatchAsync(batchId, cancellationToken).ConfigureAwait(false);
 
         JsonNode? counts = batch["request_counts"];
@@ -196,7 +196,7 @@ public sealed class JudgmentStage(string dataDirectory, string batchDirectory, s
             return 1;
         }
 
-        using var client = new AzureOpenAiBatchClient(options.Embedding.Endpoint, options.Embedding.ApiKey);
+        using var client = new AzureOpenAiBatchClient(options.Foundry.Endpoint, options.Foundry.ApiKey);
         JsonNode batch = await client.GetBatchAsync(batchId, cancellationToken).ConfigureAwait(false);
 
         string status = batch["status"]?.GetValue<string>() ?? "unknown";
@@ -463,11 +463,11 @@ public sealed class JudgmentStage(string dataDirectory, string batchDirectory, s
             [.. Enumerable.Range(0, take).Select(i => all[(int)(i * stride)])];
 
         Console.WriteLine(
-            $"Re-judging {sample.Count:N0} of {all.Count:N0} pairs with '{options.Embedding.RerankDeployment}'.");
+            $"Re-judging {sample.Count:N0} of {all.Count:N0} pairs with '{options.Foundry.ChatDeployment}'.");
 
         var client = new AzureOpenAIClient(
-                new Uri(options.Embedding.Endpoint), new DefaultAzureCredential())
-            .GetChatClient(options.Embedding.RerankDeployment);
+                new Uri(options.Foundry.Endpoint), new DefaultAzureCredential())
+            .GetChatClient(options.Foundry.ChatDeployment);
 
         var second = new int[sample.Count];
         var failed = 0;

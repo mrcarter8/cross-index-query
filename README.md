@@ -505,8 +505,8 @@ knowledge base so agentic retrieval can **decompose a query into subqueries**. L
 the service runs at `minimal` reasoning effort, where no LLM participates at all.
 
 ```
-CIQ_Search__KnowledgeBaseModelDeployment=gpt-5-nano
-CIQ_Search__KnowledgeBaseModelApiKey=<key>
+CIQ_Foundry__QueryPlanningDeployment=gpt-5-nano
+CIQ_Foundry__ApiKey=<key>
 ```
 
 The key is needed only on **serverless**. Role-based access is the documented recommendation, but

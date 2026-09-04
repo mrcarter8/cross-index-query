@@ -77,46 +77,42 @@ public sealed class KnowledgeBaseProvisioner(SearchClientFactory factory, CrossI
         // query planning that decomposes one query into subqueries. Without it the service is
         // pinned to `minimal`, where no LLM participates at all and ordering comes from the
         // semantic ranker. The sample is fully functional either way, so this stays optional.
-        SearchServiceOptions search = options.Search;
-        if (search.HasKnowledgeBaseModel)
+        FoundryOptions foundry = options.Foundry;
+        if (foundry.HasQueryPlanningModel)
         {
-            string endpoint = string.IsNullOrWhiteSpace(search.KnowledgeBaseModelEndpoint)
-                ? options.Embedding.Endpoint
-                : search.KnowledgeBaseModelEndpoint;
-
-            if (string.IsNullOrWhiteSpace(endpoint))
+            if (string.IsNullOrWhiteSpace(foundry.Endpoint))
             {
                 throw new InvalidOperationException(
-                    "A knowledge base model deployment was configured but no endpoint could be "
-                    + "resolved. Set Search:KnowledgeBaseModelEndpoint or Embedding:Endpoint.");
+                    "Foundry:QueryPlanningDeployment is set but Foundry:Endpoint is empty.");
             }
 
             var parameters = new AzureOpenAIVectorizerParameters
             {
-                ResourceUri = new Uri(endpoint),
-                DeploymentName = search.KnowledgeBaseModelDeployment,
+                ResourceUri = new Uri(foundry.Endpoint),
+                DeploymentName = foundry.QueryPlanningDeployment,
 
                 // The service validates the model against its supported list, not the deployment
                 // name. They are usually the same string, which is why one can stand in for the
                 // other, but a deployment named for its purpose rather than its model would fail
                 // validation with a confusing message if this were left to default.
-                ModelName = string.IsNullOrWhiteSpace(search.KnowledgeBaseModelName)
-                    ? search.KnowledgeBaseModelDeployment
-                    : search.KnowledgeBaseModelName,
+                ModelName = string.IsNullOrWhiteSpace(foundry.QueryPlanningModel)
+                    ? foundry.QueryPlanningDeployment
+                    : foundry.QueryPlanningModel,
             };
 
-            if (!string.IsNullOrWhiteSpace(search.KnowledgeBaseModelApiKey))
+            // The search service calls Foundry on its own behalf here, not on yours, so your
+            // credential is irrelevant to this hop. Without a key it must use a managed identity,
+            // which requires the Basic tier or higher.
+            if (!string.IsNullOrWhiteSpace(foundry.ApiKey))
             {
-                parameters.ApiKey = search.KnowledgeBaseModelApiKey;
+                parameters.ApiKey = foundry.ApiKey;
             }
 
             knowledgeBase.Models.Add(new KnowledgeBaseAzureOpenAIModel(parameters));
 
             Console.WriteLine(
-                $"  query planning model: {search.KnowledgeBaseModelDeployment} "
-                + $"({(string.IsNullOrWhiteSpace(search.KnowledgeBaseModelApiKey)
-                    ? "managed identity"
-                    : "api key")})");
+                $"  query planning model: {foundry.QueryPlanningDeployment} "
+                + $"({(string.IsNullOrWhiteSpace(foundry.ApiKey) ? "managed identity" : "api key")})");
         }
 
         await client.CreateOrUpdateKnowledgeBaseAsync(
@@ -126,7 +122,7 @@ public sealed class KnowledgeBaseProvisioner(SearchClientFactory factory, CrossI
             $"  knowledge base ready: {options.Search.KnowledgeBaseName} "
             + $"({references.Count} sources)");
 
-        if (!search.HasKnowledgeBaseModel)
+        if (!foundry.HasQueryPlanningModel)
         {
             // Stated rather than left silent, because the difference is invisible until a request
             // asking for anything above minimal effort is rejected.

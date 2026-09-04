@@ -33,12 +33,12 @@ cat > "$settings_path" <<EOF
   "Search": {
     "Endpoint": "$search_endpoint"
   },
-  "Embedding": {
+  "Foundry": {
     "Endpoint": "$openai_endpoint",
-    "Deployment": "$embedding_deployment",
-    "ModelName": "$embedding_model",
-    "Dimensions": $embedding_dimensions,
-    "BlurbDeployment": "$blurb_deployment"
+    "EmbeddingDeployment": "$embedding_deployment",
+    "EmbeddingModel": "$embedding_model",
+    "EmbeddingDimensions": $embedding_dimensions,
+    "BatchDeployment": "$blurb_deployment"
   }
 }
 EOF

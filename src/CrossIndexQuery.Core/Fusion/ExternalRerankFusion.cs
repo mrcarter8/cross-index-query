@@ -60,12 +60,12 @@ public sealed class ExternalRerankFusion : IFusionStrategy
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        var endpoint = new Uri(options.Embedding.Endpoint);
-        AzureOpenAIClient client = string.IsNullOrWhiteSpace(options.Embedding.ApiKey)
+        var endpoint = new Uri(options.Foundry.Endpoint);
+        AzureOpenAIClient client = string.IsNullOrWhiteSpace(options.Foundry.ApiKey)
             ? new AzureOpenAIClient(endpoint, new DefaultAzureCredential())
-            : new AzureOpenAIClient(endpoint, new ApiKeyCredential(options.Embedding.ApiKey));
+            : new AzureOpenAIClient(endpoint, new ApiKeyCredential(options.Foundry.ApiKey));
 
-        _client = client.GetChatClient(options.Embedding.RerankDeployment);
+        _client = client.GetChatClient(options.Foundry.ChatDeployment);
         _maxCandidates = maxCandidates;
         _maxConcurrency = maxConcurrency;
     }

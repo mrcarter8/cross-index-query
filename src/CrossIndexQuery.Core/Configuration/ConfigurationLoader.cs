@@ -31,13 +31,69 @@ public static class ConfigurationLoader
         // one-off override working.
         DotEnvFile.Load(Path.Combine(basePath, DotEnvFile.FileName));
 
-        return new ConfigurationBuilder()
+        IConfigurationRoot configuration = new ConfigurationBuilder()
             .SetBasePath(basePath)
             .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
             .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: false)
             .AddUserSecrets(typeof(ConfigurationLoader).Assembly, optional: true)
             .AddEnvironmentVariables(CrossIndexOptions.EnvironmentVariablePrefix)
             .Build();
+
+        RejectRenamedSettings(configuration);
+
+        return configuration;
+    }
+
+    /// <summary>
+    /// Fails loudly on settings from before the Foundry section was unified.
+    /// </summary>
+    /// <remarks>
+    /// The <c>Embedding</c> section became <c>Foundry</c>, and the knowledge base model settings
+    /// moved there from <c>Search</c>. Configuration binding ignores keys it does not recognise, so
+    /// without this an old file would bind to defaults and the run would fail later with something
+    /// unrelated — an empty endpoint, or agentic retrieval quietly dropping to minimal reasoning
+    /// effort. Naming the old key and its replacement costs a few lines and saves the guess.
+    /// </remarks>
+    private static void RejectRenamedSettings(IConfiguration configuration)
+    {
+        (string Old, string New)[] renamed =
+        [
+            ("Embedding:Endpoint", "Foundry:Endpoint"),
+            ("Embedding:ApiKey", "Foundry:ApiKey"),
+            ("Embedding:Deployment", "Foundry:EmbeddingDeployment"),
+            ("Embedding:ModelName", "Foundry:EmbeddingModel"),
+            ("Embedding:Dimensions", "Foundry:EmbeddingDimensions"),
+            ("Embedding:BlurbDeployment", "Foundry:BatchDeployment"),
+            ("Embedding:RerankDeployment", "Foundry:ChatDeployment"),
+            ("Search:KnowledgeBaseModelDeployment", "Foundry:QueryPlanningDeployment"),
+            ("Search:KnowledgeBaseModelName", "Foundry:QueryPlanningModel"),
+            ("Search:KnowledgeBaseModelEndpoint", "Foundry:Endpoint"),
+            ("Search:KnowledgeBaseModelApiKey", "Foundry:ApiKey"),
+        ];
+
+        List<string> found = [];
+
+        foreach ((string old, string replacement) in renamed)
+        {
+            foreach (string prefix in new[] { string.Empty, SectionName + ":" })
+            {
+                if (configuration[prefix + old] is not null)
+                {
+                    found.Add($"  {prefix + old}  ->  {prefix + replacement}");
+                }
+            }
+        }
+
+        if (found.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "These settings were renamed when the Foundry configuration was unified into one "
+                + "endpoint and one key. Update them and re-run:"
+                + Environment.NewLine
+                + string.Join(Environment.NewLine, found)
+                + Environment.NewLine
+                + "Environment variables use double underscores, e.g. CIQ_Foundry__Endpoint.");
+        }
     }
 
     /// <summary>

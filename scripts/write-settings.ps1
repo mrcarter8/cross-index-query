@@ -33,12 +33,12 @@ $settings = [ordered]@{
     Search    = [ordered]@{
         Endpoint = $searchEndpoint
     }
-    Embedding = [ordered]@{
-        Endpoint        = $openAiEndpoint
-        Deployment      = $embeddingDeployment
-        ModelName       = $embeddingModel
-        Dimensions      = [int]$embeddingDimensions
-        BlurbDeployment = $blurbDeployment
+    Foundry   = [ordered]@{
+        Endpoint            = $openAiEndpoint
+        EmbeddingDeployment = $embeddingDeployment
+        EmbeddingModel      = $embeddingModel
+        EmbeddingDimensions = [int]$embeddingDimensions
+        BatchDeployment     = $blurbDeployment
     }
 }
 

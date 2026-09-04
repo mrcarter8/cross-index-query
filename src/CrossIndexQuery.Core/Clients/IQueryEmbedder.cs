@@ -12,7 +12,7 @@ namespace CrossIndexQuery.Core.Clients;
 /// An interface rather than a concrete client for one reason that matters to the benchmark: the
 /// evaluation harness issues the same query many times, and embedding it afresh each time would add
 /// a network round trip and its variance to every latency measurement, attributing to fusion a cost
-/// that belongs to embedding. The caching implementation removes that noise.
+/// that belongs to foundry. The caching implementation removes that noise.
 /// </para>
 /// <para>
 /// The correctness constraint underneath is absolute. Every index in this sample must be built with
@@ -39,15 +39,15 @@ public sealed class AzureOpenAIQueryEmbedder : IQueryEmbedder
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        EmbeddingOptions embedding = options.Embedding;
-        var endpoint = new Uri(embedding.Endpoint);
+        FoundryOptions foundry = options.Foundry;
+        var endpoint = new Uri(foundry.Endpoint);
 
-        AzureOpenAIClient client = string.IsNullOrWhiteSpace(embedding.ApiKey)
+        AzureOpenAIClient client = string.IsNullOrWhiteSpace(foundry.ApiKey)
             ? new AzureOpenAIClient(endpoint, new DefaultAzureCredential())
-            : new AzureOpenAIClient(endpoint, new ApiKeyCredential(embedding.ApiKey));
+            : new AzureOpenAIClient(endpoint, new ApiKeyCredential(foundry.ApiKey));
 
-        _client = client.GetEmbeddingClient(embedding.Deployment);
-        Dimensions = embedding.Dimensions;
+        _client = client.GetEmbeddingClient(foundry.EmbeddingDeployment);
+        Dimensions = foundry.EmbeddingDimensions;
     }
 
     /// <summary>Dimensionality requested, which must match what the indexes were built with.</summary>
