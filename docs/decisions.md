@@ -647,3 +647,87 @@ The judgment pool is deliberately *not* qualified by mode, because a judgment is
 whatever is already on disk. Replacing it had the same shape of bug: a keyword-only run would
 discard documents a previous hybrid run had pooled, lowering coverage and biasing comparisons toward
 whichever arm ran last.
+
+## Agentic retrieval is two strategies, and the free one is the worst option measured
+
+**Measured 2026-09-04.** The catalog previously carried one `agentic-retrieval` row reporting
+parity with a single index, zero queries and zero compute units. Every part of that was misleading.
+
+**It is not an LLM rerank.** With the minimal reasoning effort this sample is forced into — forced
+because the knowledge base has no model attached — the documentation is explicit that "there's no
+LLM for intelligent query planning or answer synthesis". Ordering comes from the semantic ranker
+named by the index's own semantic configuration. Observable in the response: source activity
+reports `semanticConfigurationName`, references carry `rerankerScore`, and no `modelQueryPlanning`
+or `modelAnswerSynthesis` activity is ever emitted.
+
+**There is a cost dial, and it is enormous.** `resultsProcessing` selects how the service orders
+what it gathered:
+
+| | ordering | model tokens | judged nDCG@10 |
+| --- | --- | ---: | ---: |
+| `rerank` (default) | semantic cross-encoder score | 18,500 | **0.783** |
+| `none` | **round-robin across sources** | **0** | **0.457** |
+| *single index + semantic* | — | — | *0.723* |
+
+**+0.326 nDCG** separates them (d=1.52, p<0.0001, winning 94 of 100 queries). `agentic-rerank` is
+the best row in the study; `agentic-cheap` is the worst, below every hand-written merge including
+`interleave`.
+
+The mechanism is the one this report keeps returning to. The cross-encoder score is a property of
+the (query, document) pair and consults no corpus statistics, so it is directly comparable across
+indexes — the same reason client-side merging on `rerankerScore` works. Decline to pay for it and
+there is no comparable score left, so the service falls back to distributing results round-robin
+across sources. Which is interleaving. Which this study already measured as the worst merge
+available.
+
+So "use agentic retrieval as a cheap cross-index merge engine" is possible and genuinely free of
+model cost, and it buys the one merge strategy the rest of this report argues hardest against.
+
+**Cost reporting was wrong.** The row showed 0 queries and 0 compute units because the work happens
+server-side where the client's request counter cannot see it. Real figures now come from the
+activity array: 2 searches per query, and reasoning tokens in a column of their own rather than
+folded into compute units, which is a different meter at a different price.
+
+**This arm cannot be budget-equalized.** Every other striped arm is capped at 25 candidates per
+stripe so its total matches the single index's 50. The service rejects any `maxOutputDocuments`
+below 50, so agentic retrieval necessarily sees 2x50 against the oracle's 1x50. Its +0.060 over the
+single index therefore includes a depth advantage the other striped arms were denied, and should
+not be read as a like-for-like win. Structural, like the semantic reranker's fixed 50-document
+window.
+
+**Pooling bias struck again.** `agentic-rerank` first measured 0.715 at 87% judgment coverage;
+after extending the pool to 99% it measured 0.783. The third time in this study that a strategy
+surfacing documents no other approach found was penalised for it. No comparison here is drawn
+between arms at different coverage.
+
+### API facts worth knowing
+
+- `maxOutputDocuments` controls how many merged documents come back. **Range 50 to 200**, default
+  25 on GA. Verified: requesting 5 or 10 is rejected, 200 returns 194 given enough candidates.
+- **`maxOutputSize` silently truncates.** Requesting 200 documents without also raising the size
+  budget returns about 49, with no error and no warning — indistinguishable from there being no
+  more matching documents. Both caps must be raised together.
+- `resultsProcessing` and `maxOutputDocuments` are **preview-only**. GA `2026-04-01` rejects both
+  and caps the response at 25 references.
+- References carry `docKey`, `title`, `sourceData` (full text), `rerankerScore` and
+  `activitySource`, so the merged list is fully usable client-side. You are not limited to a
+  synthesized answer.
+
+### Not measured
+
+The genuinely agentic capability — an LLM decomposing one query into several subqueries — needs a
+model attached to the knowledge base and `low` or `medium` reasoning effort. That is the one
+countermeasure in this study's four-option framing that remains unexercised, and it is the option
+most likely to help the short, low-context queries that motivate the whole question.
+
+## A skip handler must not swallow real failures
+
+**Fixed 2026-09-04.** The harness treats `InvalidOperationException` from a strategy as "this
+strategy declares its precondition unmet" and drops the row silently, which is correct for a
+strategy that cannot run. `AgenticRetrievalFusion` then threw that same type on HTTP failure, so a
+genuine 400 from the service produced a missing row with no error printed anywhere — a run that
+looked complete and was not.
+
+It now throws `HttpRequestException`, which propagates. The bug hid a real constraint
+(`maxOutputDocuments` has a floor of 50) for an entire evaluation run. Exception types that a
+caller uses for control flow must not be reused for failures.

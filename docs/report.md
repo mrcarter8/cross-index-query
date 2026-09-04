@@ -37,7 +37,7 @@ conclusions were identical under both judges.
 | Merge on **raw scores** | −0.015 to −0.002 | small, and judge-dependent |
 | Merge on **corrected scores** | **+0.013 to +0.016** *(p<0.005)* | free, and better than not striping |
 | **Recompute BM25** client-side | **+0.005** *(p=0.28)* vs the same rescorer unstriped | **striping is free** |
-| **Rerank** on either side | **parity** *(Holm p=1.000)* | striping costs nothing |
+| **Rerank** on either side | **parity to +0.060** *(Holm p=1.000 to <0.0001)* | striping costs nothing |
 | **Vector-only** workloads | **exactly identical** *(τ=1.000, and 1.000 fidelity under exact search)* | striping is provably free |
 
 Ranges show the two independent judges. Findings worth carrying away:
@@ -543,21 +543,49 @@ rescorer on a single index gets +0.092 of it. Striping-attributable: **+0.005, p
 
 **Patterns 2–4 — reranking on both sides.** Baseline: single index **0.723**.
 
-| pattern | strategy | judged nDCG | vs single | 95% interval | p (Holm) | CU | p50 latency |
-| --- | --- | ---: | ---: | :---: | ---: | ---: | ---: |
-| **2** | `external-rerank` | **0.769** | **+0.046** | [+0.020, +0.074] | **0.0065** | 0.0008 | **23,117 ms** |
-| — | *single index + semantic* | *0.723* | — | — | — | 0.0004 | 155 ms |
-| **3** | `semantic-score` | 0.724 | +0.001 | [−0.015, +0.016] | **1.000** *(parity)* | 0.0008 | **149 ms** |
-| **3** | `semantic-rerank` | 0.724 | +0.001 | [−0.015, +0.016] | **1.000** *(parity)* | 0.0014 | 254 ms |
-| **4** | `agentic-retrieval` | 0.719 | −0.004 | [−0.021, +0.013] | **1.000** *(parity)* | — | 331 ms |
-| 1 | `global-rrf` *(for contrast)* | 0.620 | −0.103 | [−0.133, −0.074] | <0.0001 | 0.0008 | 149 ms |
-| 1 | *`single-index-rescored`* ⟵ *control* | *0.629* | *−0.094* | *[−0.122, −0.067]* | *<0.0001* | 0.0004 | *155 ms* |
+| pattern | strategy | judged nDCG | vs single | 95% interval | p (Holm) | CU | model tokens | p50 latency |
+| --- | --- | ---: | ---: | :---: | ---: | ---: | ---: | ---: |
+| **4** | **`agentic-rerank`** | **0.783** | **+0.060** | [+0.037, +0.085] | **<0.0001** | — | **18,500** | 1,976 ms |
+| **2** | `external-rerank` | **0.773** | **+0.050** | [+0.024, +0.077] | **0.0009** | 0.0007 | — | **23,028 ms** |
+| **3** | `semantic-score` | 0.723 | +0.000 | [−0.015, +0.016] | **1.000** *(parity)* | 0.0007 | — | **151 ms** |
+| **3** | `semantic-rerank` | 0.723 | +0.000 | [−0.015, +0.016] | **1.000** *(parity)* | 0.0014 | — | 261 ms |
+| — | *single index + semantic* | *0.723* | — | — | — | 0.0004 | — | 159 ms |
+| 1 | `global-rrf` *(for contrast)* | 0.620 | −0.103 | [−0.133, −0.074] | <0.0001 | 0.0007 | — | 151 ms |
+| **4** | **`agentic-cheap`** | **0.457** | **−0.266** | [−0.302, −0.231] | **<0.0001** | — | **0** | 1,824 ms |
 
-That last row is the control behaving exactly as it should. Client-side BM25 recomputation was the
-best thing you could do in the keyword tier; here it is one of the worst, because rebuilding a BM25
-score throws away the cross-encoder score that was the whole point of paying for reranking. A
-technique is not good or bad in itself — it is good or bad for a particular signal, and the control
-demonstrates that rather than asserting it.
+### Pattern 4 is a dial, not a row
+
+`agentic-rerank` and `agentic-cheap` are the same feature with one property changed —
+`resultsProcessing` — and **0.326 nDCG** separates them (d=1.52, p<0.0001, winning 94 of 100
+queries). One is the best result in this study; the other is the worst, below every hand-written
+merge including `interleave`. Reporting them as a single "agentic retrieval" row would average away
+the most useful thing this pattern has to say.
+
+The mechanism is the one this report keeps returning to:
+
+| `resultsProcessing` | how it orders | why | tokens |
+| --- | --- | --- | ---: |
+| `rerank` *(default)* | semantic cross-encoder score | the score is a property of the (query, document) pair, so it is **comparable across indexes** | 18,500 |
+| `none` | **round-robin across sources** | no comparable score exists, so position is all that is left | **0** |
+
+Decline to pay for reranking and the service falls back to round-robin — which is interleaving,
+which this report measures as the worst merge available. **Using agentic retrieval as a free
+cross-index merge engine is possible, and it buys the exact merge strategy this report argues
+hardest against.**
+
+Three caveats, all of which cut against the flattering number:
+
+- **It is not an LLM ranking anything.** With minimal reasoning effort — forced here, because the
+  knowledge base has no model attached — the documentation states there is "no LLM for intelligent
+  query planning or answer synthesis". Ordering comes from the same semantic ranker the pattern 3
+  rows use. Confirmed in the response: source activity names `semanticConfigurationName`,
+  references carry `rerankerScore`, and no `modelQueryPlanning` activity is ever emitted.
+- **It cannot be budget-equalized.** Every other striped arm is held to 25 candidates per stripe so
+  its total matches the single index's 50. The service rejects any `maxOutputDocuments` below 50,
+  so this arm necessarily sees 2×50 against the oracle's 1×50. Part of its +0.060 is candidate
+  depth the other arms were denied, and it should not be read as a like-for-like win.
+- **The tokens are real and are not compute units.** 18,500 per query on a separate meter at a
+  separate price, which is why they have their own column rather than being folded into CU.
 
 ### What this says
 
@@ -577,14 +605,16 @@ zero wins and zero losses across all 100 queries — at **half** the compute uni
 latency. If your fan-out already requested semantic ranking, sorting by the score it returned is
 free. A second reranking pass buys nothing.
 
-**Agentic retrieval matches the semantic strategies** (−0.005 against `semantic-score`, p=0.11) with
-no client-side merge code at all. It bills on its own meter rather than in compute units, so its CU
-column is not comparable to the others; its latency is.
+**Agentic retrieval is the best and the worst row in this study, depending on one property.**
+`agentic-rerank` scores 0.783 and `agentic-cheap` 0.457 — a 0.326 gap — with no client-side merge
+code in either case. Both bill reasoning tokens on their own meter rather than in compute units, so
+their CU column is not comparable to the others; their latency and token counts are. Neither can be
+budget-equalized with the rest of the table, because the service floors `maxOutputDocuments` at 50.
 
-**Pattern 2 is the only thing that beat a reranked single index** (+0.046, Holm p=0.0065) — and it took
-**21.8 seconds per query** against 157 ms. That is a 139× latency multiplier for a result that is
-0.028 better and, at seven comparisons, does not survive Bonferroni. It is the right answer only
-when no built-in reranker is available to you.
+**Pattern 2 beat a reranked single index too** (+0.050, Holm p=0.0009) — and it took **23 seconds
+per query** against 159 ms. That is a 145× latency multiplier to land slightly behind
+`agentic-rerank`, which costs 2 seconds. It is the right answer only when no built-in reranker is
+available to you.
 
 ---
 
@@ -637,8 +667,9 @@ that it has a measurable relevance cost.
 | Keyword or hybrid, cost-sensitive | **Pattern 1**, sidecar or client-side BM25 | parity to +0.013 |
 | Vector only | **Pattern 1**, naive merge is correct | parity |
 | Already paying for semantic ranking | **Pattern 3**, merge on `rerankerScore` | parity |
-| Want the service to own collation | **Pattern 4** | parity |
-| No built-in reranker available | **Pattern 2** | +0.046, at ~23 s/query |
+| Want the service to own collation | **Pattern 4**, `resultsProcessing: rerank` | +0.060, ~18.5k tokens/query |
+| No built-in reranker available | **Pattern 2** | +0.050, at ~23 s/query |
+| Tempted by agentic retrieval's free mode | **don't** — `resultsProcessing: none` | **−0.266**, worst measured |
 
 ---
 

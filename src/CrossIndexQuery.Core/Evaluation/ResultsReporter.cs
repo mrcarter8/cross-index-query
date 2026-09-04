@@ -27,7 +27,7 @@ public static class ResultsReporter
         var sb = new StringBuilder();
         sb.AppendLine(
             "queryId,query,shape,span,intent,mode,strategy,ndcg,recall,jaccard,kendallTau,rbo,"
-            + "judgedNdcg,judgedCoverage,queries,computeUnits,latencyMs,stripeMix");
+            + "judgedNdcg,judgedCoverage,queries,computeUnits,modelTokens,latencyMs,stripeMix");
 
         foreach (EvaluationRecord r in records)
         {
@@ -51,6 +51,11 @@ public static class ResultsReporter
               .Append(r.JudgedCoverage is { } jc ? Num(jc) : string.Empty).Append(',')
               .Append(r.QueryCount.ToString(CultureInfo.InvariantCulture)).Append(',')
               .Append(Num(r.ComputeUnits)).Append(',')
+
+              // Blank rather than 0 when the strategy consumes no model tokens, so a reader cannot
+              // mistake "this meter did not run" for "this meter ran and charged nothing".
+              .Append(r.ModelTokens is { } mt ? mt.ToString(CultureInfo.InvariantCulture) : string.Empty)
+              .Append(',')
               .Append(Num(r.LatencyMs)).Append(',')
               .Append(Csv(mix))
               .AppendLine();
@@ -95,8 +100,8 @@ public static class ResultsReporter
                     .OrderByDescending(s => s.Ndcg)
             ];
 
-            sb.AppendLine("| Strategy | nDCG@10 | Recall@10 | RBO | Kendall τ | Queries | Compute units | p50 ms | p95 ms |");
-            sb.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+            sb.AppendLine("| Strategy | nDCG@10 | Recall@10 | RBO | Kendall τ | Queries | Compute units | Model tokens | p50 ms | p95 ms |");
+            sb.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
 
             foreach (StrategySummary s in summaries)
             {
@@ -107,6 +112,12 @@ public static class ResultsReporter
                   .Append(F3(s.KendallTau)).Append(" | ")
                   .Append(F1(s.QueriesPerRequest)).Append(" | ")
                   .Append(F4(s.ComputeUnits)).Append(" | ")
+
+                  // An em dash where no model meter ran at all, which is not the same claim as zero.
+                  .Append(s.ModelTokens is { } tokens
+                      ? tokens.ToString("N0", CultureInfo.InvariantCulture)
+                      : "—")
+                  .Append(" | ")
                   .Append(F0(s.LatencyP50Ms)).Append(" | ")
                   .Append(F0(s.LatencyP95Ms)).AppendLine(" |");
             }

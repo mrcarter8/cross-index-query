@@ -37,6 +37,44 @@ public sealed class FusionStrategyRegistry
         }
     }
 
+    /// <summary>
+    /// A registry containing only the named strategies.
+    /// </summary>
+    /// <remarks>
+    /// An unknown name is an error rather than an empty result. A typo that silently produced a run
+    /// with no strategies, or with fewer than intended, would look like a completed experiment.
+    /// </remarks>
+    /// <exception cref="ArgumentException">A requested name is not registered.</exception>
+    public FusionStrategyRegistry Only(IEnumerable<string> names)
+    {
+        ArgumentNullException.ThrowIfNull(names);
+
+        List<IFusionStrategy> selected = [];
+        List<string> unknown = [];
+
+        foreach (string name in names)
+        {
+            if (_strategies.TryGetValue(name, out IFusionStrategy? strategy))
+            {
+                selected.Add(strategy);
+            }
+            else
+            {
+                unknown.Add(name);
+            }
+        }
+
+        if (unknown.Count > 0)
+        {
+            throw new ArgumentException(
+                $"Unknown strateg{(unknown.Count == 1 ? "y" : "ies")}: {string.Join(", ", unknown)}. "
+                + $"Registered: {string.Join(", ", _strategies.Keys.Order(StringComparer.Ordinal))}.",
+                nameof(names));
+        }
+
+        return new FusionStrategyRegistry(selected);
+    }
+
     public IReadOnlyCollection<IFusionStrategy> All => [.. _strategies.Values];
 
     public IFusionStrategy Get(string name) =>
@@ -131,8 +169,20 @@ public sealed class FusionStrategyRegistry
                 * Math.Max(options.Search.StripeIndexes.Count, 1)));
 
         // Pattern 4: the service retrieves across every stripe itself. Not a merge at all, which is
-        // why it sits at the end of a list of merges.
-        strategies.Add(new AgenticRetrievalFusion(options));
+        // why it sits at the end of a list of merges. Registered twice, because it is really two
+        // strategies: the cost/quality dial between them is the most useful thing this pattern has
+        // to say, and one row would hide it.
+        //
+        // Not budget-equalized, because it cannot be. Every other striped arm is held to 25
+        // candidates per stripe so its total matches the oracle's 50, but the service rejects any
+        // maxOutputDocuments below 50 outright ("must be between 50 and 200"). Agentic retrieval
+        // therefore sees 2x50 against the oracle's 1x50, and that asymmetry is a property of the
+        // feature rather than a choice this sample makes — the same situation as the semantic
+        // reranker's fixed 50-document window. It is stated wherever these rows are reported.
+        strategies.Add(new AgenticRetrievalFusion(
+            options, AgenticResultsProcessing.Rerank, AgenticRetrievalFusion.MinimumOutputDocuments));
+        strategies.Add(new AgenticRetrievalFusion(
+            options, AgenticResultsProcessing.None, AgenticRetrievalFusion.MinimumOutputDocuments));
 
         return new FusionStrategyRegistry(strategies);
     }

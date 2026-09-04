@@ -99,16 +99,25 @@ var limitOption = new Option<int>("--limit")
     DefaultValueFactory = _ => 0,
 };
 
+var evaluateStrategyOption = new Option<string[]>("--strategy")
+{
+    Description = "Evaluate only the named strategies. Repeatable. Writes to a .subset file so a "
+        + "partial run cannot overwrite a full one.",
+    AllowMultipleArgumentsPerToken = true,
+};
+
 var evaluate = new Command(
     "evaluate",
     "Run every applicable fusion strategy over the query set and score it against the oracle.");
 evaluate.Options.Add(modesOption);
 evaluate.Options.Add(semanticOption);
 evaluate.Options.Add(limitOption);
+evaluate.Options.Add(evaluateStrategyOption);
 evaluate.SetAction((parse, ct) => new EvaluateCommand(options).RunAsync(
     parse.GetValue(modesOption) ?? [RetrievalMode.Hybrid],
     parse.GetValue(semanticOption),
     parse.GetValue(limitOption),
+    parse.GetValue(evaluateStrategyOption),
     ct));
 root.Subcommands.Add(evaluate);
 

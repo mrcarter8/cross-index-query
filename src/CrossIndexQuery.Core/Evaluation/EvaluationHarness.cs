@@ -334,12 +334,23 @@ public sealed class EvaluationHarness(
             // its own account are what actually distinguish them on cost — except for one that did
             // its own retrieval and never touched the shared fan-out, which is charged for itself
             // alone.
-            QueryCount = strategy.PerformsOwnRetrieval
-                ? scope.RequestCount
-                : stripes.QueryCount + scope.RequestCount,
+            //
+            // A strategy whose work happens server-side reports its own counts, because the
+            // client-side scope cannot observe requests it never issued. Falling back to the scope
+            // there would print a zero, and a zero in a cost column reads as free rather than as
+            // unmeasured.
+            QueryCount = strategy switch
+            {
+                AgenticRetrievalFusion agentic => agentic.LastSearchCount,
+                { PerformsOwnRetrieval: true } => scope.RequestCount,
+                _ => stripes.QueryCount + scope.RequestCount,
+            },
             ComputeUnits = strategy.PerformsOwnRetrieval
                 ? scope.TotalComputeUnits ?? 0d
                 : stripes.ComputeUnits + (scope.TotalComputeUnits ?? 0d),
+            ModelTokens = strategy is AgenticRetrievalFusion tokenSource
+                ? tokenSource.LastReasoningTokens
+                : null,
             LatencyMs = strategy.PerformsOwnRetrieval
                 ? fusionTime.TotalMilliseconds
                 : stripes.Elapsed.TotalMilliseconds + fusionTime.TotalMilliseconds,

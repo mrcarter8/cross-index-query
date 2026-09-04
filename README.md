@@ -372,21 +372,39 @@ Ordered by what they cost you at query time.
 
 | # | pattern | who ranks | extra queries | extra bill | measured p50 |
 | --- | --- | --- | --- | --- | ---: |
-| **1** | [**Query only**](samples/Pattern1_QueryOnly.cs) | your code — arithmetic | none | **none** | **54 ms** |
-| **2** | [Self-rerank, external](samples/Pattern2_ExternalRerank.cs) | a model you host | none | your model | 23,117 ms |
-| **3** | [Built-in semantic ranker](samples/Pattern3_SemanticRanker.cs) | the service | none | semantic meter | 157 ms |
-| **4** | [Agentic retrieval](samples/Pattern4_AgenticRetrieval.cs) | the service, end to end | replaces yours | agentic meter | 327 ms |
+| **1** | [**Query only**](samples/Pattern1_QueryOnly.cs) | your code — arithmetic | none | **none** | **55 ms** |
+| **2** | [Self-rerank, external](samples/Pattern2_ExternalRerank.cs) | a model you host | none | your model | 23,028 ms |
+| **3** | [Built-in semantic ranker](samples/Pattern3_SemanticRanker.cs) | the service | none | semantic meter | 151 ms |
+| **4** | [Agentic retrieval](samples/Pattern4_AgenticRetrieval.cs) | the service, end to end | replaces yours | ~18.5k tokens/query | 1,976 ms |
 
 Each sample is a small file showing the merge itself — including the wrong ways, with comments
 explaining why they're wrong.
 
 **Pattern 1 is the answer for most people.** One precomputed statistics file, no query-time cost, and
-it measured *better* than not splitting.
+the split becomes undetectable.
 
-**Patterns 3 and 4 reach statistical parity** with a single index (p = 0.24–0.49). If you already pay
-for reranking, splitting costs nothing measurable — and the reason is structural: a cross-encoder
-scores (query, document) pairs and never consults corpus statistics, so a split corpus has nothing
-to distort. Pattern 4 requires both indexes in the same service.
+**Pattern 3 reaches exact parity** with a single index (Holm p = 1.000, 32 of 100 queries returning
+an identical list). If you already pay for reranking, splitting costs nothing measurable — and the
+reason is structural: a cross-encoder scores (query, document) pairs and never consults corpus
+statistics, so a split corpus has nothing to distort.
+
+> **Pattern 4 has a trap worth knowing about.** Agentic retrieval produced both the **best** result
+> in this study and the **worst**, separated by a single configuration property.
+>
+> | `resultsProcessing` | how it merges | tokens | judged nDCG |
+> | --- | --- | ---: | ---: |
+> | `rerank` *(default)* | semantic cross-encoder score | 18,500 | **0.783** |
+> | `none` | **round-robin interleave** | **0** | **0.457** |
+>
+> A 0.326 gap (94 of 100 queries). It's tempting to use agentic retrieval as a *free* cross-index
+> merge engine — set `resultsProcessing: none` and it costs zero model tokens. Don't. With no
+> comparable score to sort by, the service falls back to round-robin across sources, which is
+> interleaving — the worst merge in this entire report.
+>
+> Also worth knowing: despite the name, **no LLM ranks anything here** unless you attach a model to
+> the knowledge base. It's the same semantic ranker pattern 3 uses. And `maxOutputDocuments`
+> (range **50–200**, default 25) is silently capped by `maxOutputSize` — ask for 200 without raising
+> both and you get ~49, with no error.
 
 **Keep the comparison honest.** Reranking is worth about **+0.19 nDCG** on its own — an order of
 magnitude more than anything splitting does to you in either direction. It improves a single index

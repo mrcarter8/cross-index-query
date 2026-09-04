@@ -37,6 +37,19 @@ public sealed record EvaluationRecord
     /// </summary>
     public required double ComputeUnits { get; init; }
 
+    /// <summary>
+    /// Model tokens the service consumed on this query, when the strategy reports them.
+    /// </summary>
+    /// <remarks>
+    /// Null for every strategy that consumes no model tokens, and deliberately not folded into
+    /// <see cref="ComputeUnits"/>. Reranking tokens and search compute units are separate meters
+    /// with separate prices; adding them would produce a number that is not a cost of anything.
+    /// Null rather than zero for the same reason judged relevance is null when unjudged — zero is a
+    /// claim that no tokens were used, which is only true for some of the strategies that report
+    /// nothing here.
+    /// </remarks>
+    public int? ModelTokens { get; init; }
+
     public required double LatencyMs { get; init; }
 
     /// <summary>How many of the returned documents came from each stripe.</summary>
@@ -86,7 +99,8 @@ public sealed record StrategySummary(
     double LatencyP50Ms,
     double LatencyP95Ms,
     double? JudgedNdcg = null,
-    double? JudgedCoverage = null)
+    double? JudgedCoverage = null,
+    double? ModelTokens = null)
 {
     public static StrategySummary Aggregate(string mode, string strategy, IReadOnlyList<EvaluationRecord> records)
     {
@@ -117,7 +131,13 @@ public sealed record StrategySummary(
             LatencyP50Ms: Percentile(latencies, 0.50),
             LatencyP95Ms: Percentile(latencies, 0.95),
             JudgedNdcg: judged.Length > 0 ? judged.Average(r => r.JudgedNdcg!.Value) : null,
-            JudgedCoverage: judged.Length > 0 ? judged.Average(r => r.JudgedCoverage!.Value) : null);
+            JudgedCoverage: judged.Length > 0 ? judged.Average(r => r.JudgedCoverage!.Value) : null,
+
+            // Averaged only over records that reported tokens, so a strategy that consumes
+            // none stays null rather than dragging a shared average toward zero.
+            ModelTokens: records.Any(r => r.ModelTokens is not null)
+                ? records.Where(r => r.ModelTokens is not null).Average(r => (double)r.ModelTokens!.Value)
+                : null);
     }
 
     /// <summary>Nearest-rank percentile over a pre-sorted array.</summary>

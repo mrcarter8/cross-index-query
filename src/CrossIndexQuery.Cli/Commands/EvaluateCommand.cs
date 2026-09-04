@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using CrossIndexQuery.Core;
 using CrossIndexQuery.Core.Clients;
@@ -28,6 +29,7 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
         IReadOnlyList<RetrievalMode> modes,
         bool semantic,
         int? queryLimit,
+        IReadOnlyList<string>? onlyStrategies = null,
         CancellationToken cancellationToken = default)
     {
         string dataDirectory = RepositoryLocator.ResolveDataDirectory(options.Corpus.DataDirectory);
@@ -70,6 +72,18 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
         }
 
         FusionStrategyRegistry registry = FusionStrategyRegistry.CreateDefault(factory, options, statistics);
+
+        // Narrowing the catalog makes iterating on one strategy affordable. The full semantic run
+        // takes roughly forty minutes, almost all of it in the external reranker, so re-measuring a
+        // single strategy without this would mean paying for every other one again.
+        if (onlyStrategies is { Count: > 0 })
+        {
+            registry = registry.Only(onlyStrategies);
+
+            Console.WriteLine($"Restricted to: {string.Join(", ", onlyStrategies)}.");
+            Console.WriteLine();
+        }
+
         var harness = new EvaluationHarness(retriever, registry, embedder, options);
 
         var progress = new Progress<EvaluationProgress>(p =>
@@ -120,6 +134,15 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
             : ".alt-judge";
 
         string stem = $"results.{options.Corpus.SplitDescriptor}.{tier}{modeSuffix}{judgeSuffix}";
+
+        // A filtered run is a partial experiment and must never land on the full run's filename.
+        // This is the same failure the mode suffix exists to prevent: a file whose contents are a
+        // subset of what its name promises, with nothing to indicate the rest was lost.
+        if (onlyStrategies is { Count: > 0 })
+        {
+            stem += ".subset";
+        }
+
         string csvPath = Path.Combine(outputDirectory, $"{stem}.csv");
         string markdownPath = Path.Combine(outputDirectory, $"{stem}.md");
 
@@ -309,13 +332,20 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
                 // reproduce the single index faithfully and still be returning mediocre documents,
                 // and the two columns disagreeing is the interesting case.
                 Console.WriteLine(
-                    $"{"strategy",-26}{"judged",8}{"cover",8}{"fidelity",10}{"recall",8}{"CU",10}{"p50ms",8}");
+                    $"{"strategy",-26}{"judged",8}{"cover",8}{"fidelity",10}{"recall",8}{"CU",10}{"tokens",9}{"p50ms",8}");
 
                 foreach (StrategySummary s in Summaries(byMode).OrderByDescending(s => s.JudgedNdcg ?? -1))
                 {
+                    // A dash, not a zero, where a strategy consumes no model tokens. Zero would
+                    // claim the meter ran and charged nothing.
+                    string tokens = s.ModelTokens is { } t
+                        ? t.ToString("N0", CultureInfo.InvariantCulture)
+                        : "-";
+
                     Console.WriteLine(
                         $"{s.Strategy,-26}{s.JudgedNdcg ?? 0,8:F3}{s.JudgedCoverage ?? 0,8:P0}"
-                        + $"{s.Ndcg,10:F3}{s.Recall,8:F3}{s.ComputeUnits,10:F4}{s.LatencyP50Ms,8:F0}");
+                        + $"{s.Ndcg,10:F3}{s.Recall,8:F3}{s.ComputeUnits,10:F4}{tokens,9}"
+                        + $"{s.LatencyP50Ms,8:F0}");
                 }
             }
             else
