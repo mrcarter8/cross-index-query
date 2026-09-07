@@ -43,6 +43,50 @@ public enum AgenticResultsProcessing
 }
 
 /// <summary>
+/// How much work the service puts into planning the retrieval before running it.
+/// </summary>
+/// <remarks>
+/// Orthogonal to <see cref="AgenticResultsProcessing"/>, which governs how results are ordered
+/// once gathered. This governs how they are gathered in the first place.
+/// </remarks>
+public enum AgenticReasoningEffort
+{
+    /// <summary>
+    /// No planning. The query string goes straight to the retrieval engine.
+    /// </summary>
+    /// <remarks>
+    /// The only option available when no model is attached to the knowledge base, and the state in
+    /// which every agentic number this study published before now was measured. One search per
+    /// knowledge source, using the query exactly as the caller wrote it.
+    /// </remarks>
+    Minimal,
+
+    /// <summary>
+    /// An attached LLM rewrites the query into several subqueries before retrieval.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the capability the feature is named for, and it is the only option in this study's
+    /// four-way framing that changes <em>what gets retrieved</em> rather than how retrieved results
+    /// are ordered. Measured against this corpus, "books about love and loss" became three
+    /// subqueries — the original, plus "novels grief romance loss" and "memoirs love loss
+    /// bereavement" — each run against both stripes, turning two searches into six.
+    /// </para>
+    /// <para>
+    /// It is the most plausible countermeasure for the case that motivates cross-index relevance
+    /// work: a short query carrying almost no context, where the ranking has to come from the
+    /// corpus rather than from the query. Whether the extra retrieval breadth is worth roughly
+    /// three times the tokens is exactly what the harness is for.
+    /// </para>
+    /// <para>
+    /// Requires a model on the knowledge base. Without one the service rejects any effort above
+    /// minimal outright, which is why this is a separate registered strategy rather than a default.
+    /// </para>
+    /// </remarks>
+    Low,
+}
+
+/// <summary>
 /// Delegates both retrieval and collation to the service, over a knowledge base spanning every
 /// stripe.
 /// </summary>
@@ -115,12 +159,14 @@ public sealed class AgenticRetrievalFusion : IFusionStrategy, IDisposable
     private readonly int _maxOutputDocuments;
     private readonly int _maxOutputSize;
     private readonly AgenticResultsProcessing _processing;
+    private readonly AgenticReasoningEffort _effort;
 
     public AgenticRetrievalFusion(
         CrossIndexOptions options,
         AgenticResultsProcessing processing = AgenticResultsProcessing.Rerank,
-        int maxOutputDocuments = 50,
-        int maxRuntimeSeconds = 30)
+        int maxOutputDocuments = MinimumOutputDocuments,
+        AgenticReasoningEffort effort = AgenticReasoningEffort.Minimal,
+        int maxRuntimeSeconds = 60)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -136,6 +182,7 @@ public sealed class AgenticRetrievalFusion : IFusionStrategy, IDisposable
         _endpoint = new Uri(options.Search.Endpoint);
         _knowledgeBase = options.Search.KnowledgeBaseName;
         _processing = processing;
+        _effort = effort;
         _maxRuntimeSeconds = maxRuntimeSeconds;
         _maxOutputDocuments = maxOutputDocuments;
 
@@ -152,13 +199,21 @@ public sealed class AgenticRetrievalFusion : IFusionStrategy, IDisposable
 
     private IReadOnlyList<string> KnowledgeSourceNames { get; }
 
-    public string Name => _processing == AgenticResultsProcessing.Rerank
-        ? "agentic-rerank"
-        : "agentic-cheap";
+    public string Name => (_processing, _effort) switch
+    {
+        (AgenticResultsProcessing.None, _) => "agentic-cheap",
+        (_, AgenticReasoningEffort.Low) => "agentic-planned",
+        _ => "agentic-rerank",
+    };
 
-    public string Description => _processing == AgenticResultsProcessing.Rerank
-        ? "Service retrieves from every stripe and orders by semantic reranker score."
-        : "Service retrieves from every stripe and interleaves round-robin. No reranking, no tokens.";
+    public string Description => (_processing, _effort) switch
+    {
+        (AgenticResultsProcessing.None, _) =>
+            "Service retrieves from every stripe and interleaves round-robin. No reranking, no tokens.",
+        (_, AgenticReasoningEffort.Low) =>
+            "An LLM rewrites the query into subqueries, then the service retrieves and reranks.",
+        _ => "Service retrieves from every stripe and orders by semantic reranker score.",
+    };
 
     public bool Supports(RetrievalMode mode) => true;
 
@@ -197,6 +252,27 @@ public sealed class AgenticRetrievalFusion : IFusionStrategy, IDisposable
     /// column rather than folded into one.
     /// </remarks>
     public int LastReasoningTokens { get; private set; }
+
+    /// <summary>
+    /// Tokens the query-planning model consumed on the most recent call.
+    /// </summary>
+    /// <remarks>
+    /// Zero unless an LLM actually planned the retrieval. Reported separately from
+    /// <see cref="LastReasoningTokens"/> because the two answer different questions: planning
+    /// tokens are the price of deciding <em>what to search for</em>, reasoning tokens the price of
+    /// ranking what came back. Only the first is avoidable by rewriting the query yourself.
+    /// </remarks>
+    public int LastPlanningTokens { get; private set; }
+
+    /// <summary>
+    /// Subqueries the service issued on the most recent call, across every source.
+    /// </summary>
+    /// <remarks>
+    /// Equal to the number of knowledge sources when nothing planned the retrieval. Higher when an
+    /// LLM decomposed the query, and the multiple is the clearest single measure of what planning
+    /// costs in search work: one query in, six searches out.
+    /// </remarks>
+    public int LastSubqueryCount => LastSearchCount;
 
     public async ValueTask<IReadOnlyList<FusedDocument>> FuseAsync(
         FanOutResult fanOut,
@@ -258,11 +334,11 @@ public sealed class AgenticRetrievalFusion : IFusionStrategy, IDisposable
         {
             writer.WriteStartObject();
 
-            // Minimal effort is not a tuning choice: any higher effort requires a model attached to
-            // the knowledge base, and without one the service rejects the request outright.
+            // Minimal unless a model is attached. Any higher effort is rejected outright without
+            // one, so this is the setting that decides whether an LLM participates at all.
             writer.WriteString("outputMode", "extractiveData");
             writer.WriteStartObject("retrievalReasoningEffort");
-            writer.WriteString("kind", "minimal");
+            writer.WriteString("kind", _effort == AgenticReasoningEffort.Low ? "low" : "minimal");
             writer.WriteEndObject();
 
             writer.WriteStartArray("intents");
@@ -316,6 +392,7 @@ public sealed class AgenticRetrievalFusion : IFusionStrategy, IDisposable
     {
         LastSearchCount = 0;
         LastReasoningTokens = 0;
+        LastPlanningTokens = 0;
 
         if (!root.TryGetProperty("activity", out JsonElement activity)
             || activity.ValueKind != JsonValueKind.Array)
@@ -346,11 +423,22 @@ public sealed class AgenticRetrievalFusion : IFusionStrategy, IDisposable
 
                     break;
 
+                // Emitted only when an LLM planned the retrieval. Its absence is how this study
+                // established that minimal effort involves no model at all.
+                case "modelQueryPlanning":
+                    LastPlanningTokens += Int(record, "inputTokens") + Int(record, "outputTokens");
+                    break;
+
                 default:
                     break;
             }
         }
     }
+
+    private static int Int(JsonElement element, string name) =>
+        element.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetInt32()
+            : 0;
 
     /// <summary>
     /// Turns the references array into ranked documents.

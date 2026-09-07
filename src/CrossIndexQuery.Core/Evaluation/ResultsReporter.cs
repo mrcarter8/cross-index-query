@@ -68,6 +68,7 @@ public static class ResultsReporter
         string path,
         IReadOnlyList<EvaluationRecord> records,
         string serviceDescription,
+        bool semanticRanker = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -124,6 +125,7 @@ public static class ResultsReporter
 
             sb.AppendLine();
             AppendSpanBreakdown(sb, byMode);
+            AppendTradeoff(sb, byMode, semanticRanker);
             AppendSignificance(sb, byMode);
         }
 
@@ -131,8 +133,116 @@ public static class ResultsReporter
     }
 
     /// <summary>
-    /// Reports each strategy against the single-index baseline with intervals and corrected p-values.
+    /// Reports quality, cost and latency against the single index on one line per strategy.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The table the whole study exists to produce. Quality alone cannot answer "should I split",
+    /// because a technique that recovers the relevance loss by paying for a reranker on every query
+    /// has not made splitting free — it has moved the cost to a different meter. Putting all three
+    /// axes on one row is what stops that trade from being invisible.
+    /// </para>
+    /// <para>
+    /// Everything is expressed as a multiple of the single index rather than in absolute units.
+    /// Absolute figures are in the columns beside them for anyone who wants them, but the multiple
+    /// is what survives a change of corpus, tier or region — and it is the form in which the
+    /// answer is actually useful: "this costs 70x more and returns 4% better" is a decision, where
+    /// "$7.40 per thousand queries" is a number needing a second number to interpret.
+    /// </para>
+    /// </remarks>
+    private static void AppendTradeoff(
+        StringBuilder sb,
+        IEnumerable<EvaluationRecord> records,
+        bool semanticRanker)
+    {
+        List<StrategySummary> summaries =
+        [
+            .. records.GroupBy(r => r.Strategy)
+                .Select(g => StrategySummary.Aggregate(g.First().Mode, g.Key, [.. g]))
+        ];
+
+        StrategySummary? baseline = summaries
+            .FirstOrDefault(s => s.Strategy == EvaluationHarness.SingleIndexBaseline);
+
+        if (baseline is null || summaries.Count < 2)
+        {
+            return;
+        }
+
+        CostModel model = CostModel.Default;
+
+        double Cost(StrategySummary s) => model.PerThousandQueries(
+            s.ComputeUnits,
+
+            // Every request in a semantic run invokes the ranker, so the number of ranker
+            // invocations is the number of requests. A strategy that fans out to two indexes
+            // therefore pays the ranker twice for one user query, which is a real cost of splitting
+            // and one that no client-side merge can avoid.
+            semanticRanker ? (int)Math.Round(s.QueriesPerRequest) : 0,
+            (int)Math.Round(s.ModelTokens ?? 0));
+
+        double baselineCost = Cost(baseline);
+        double baselineQuality = baseline.JudgedNdcg ?? 0;
+        double baselineLatency = baseline.LatencyP50Ms;
+
+        sb.AppendLine("### Quality, cost and latency").AppendLine();
+        sb.Append("Cost assumes $")
+          .Append(F2(model.DollarsPerComputeUnitHour))
+          .Append(" per compute-unit hour and $")
+          .Append(F2(model.DollarsPerThousandSemanticQueries))
+          .AppendLine(" per 1K semantic ranker queries, both read from the Azure retail")
+          .Append("prices API, plus $")
+          .Append(F2(model.DollarsPerMillionTokens))
+          .AppendLine(" per million model tokens, which is an assumption rather than a")
+          .AppendLine("measurement — substitute your own rate and the token-bearing rows move with it.")
+          .AppendLine();
+
+        sb.AppendLine(
+            "| Strategy | Quality | vs single | $/1K queries | vs single | p50 ms | vs single | Tokens/query |");
+        sb.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+
+        foreach (StrategySummary s in summaries.OrderByDescending(s => s.JudgedNdcg ?? -1))
+        {
+            double cost = Cost(s);
+            double quality = s.JudgedNdcg ?? 0;
+
+            sb.Append("| `").Append(s.Strategy).Append("` | ")
+              .Append(F3(quality)).Append(" | ")
+              .Append(Multiple(quality, baselineQuality)).Append(" | ")
+              .Append(CostModel.Format(cost)).Append(" | ")
+              .Append(Multiple(cost, baselineCost)).Append(" | ")
+              .Append(F0(s.LatencyP50Ms)).Append(" | ")
+              .Append(Multiple(s.LatencyP50Ms, baselineLatency)).Append(" | ")
+              .Append(s.ModelTokens is { } t ? t.ToString("N0", CultureInfo.InvariantCulture) : "—")
+              .AppendLine(" |");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine(
+            "A multiple below 1.00x in the quality column is relevance lost; above 1.00x in the cost")
+          .AppendLine(
+            "or latency columns is what recovering it charged you. Read the three together — a row")
+          .AppendLine("that wins on quality alone has not necessarily won.")
+          .AppendLine();
+    }
+
+    /// <summary>
+    /// Formats a ratio against the baseline, guarding the degenerate denominator.
+    /// </summary>
+    private static string Multiple(double value, double baseline)
+    {
+        if (baseline <= 0)
+        {
+            return "—";
+        }
+
+        double ratio = value / baseline;
+
+        // Large multiples are the interesting ones here and three decimals on them is noise.
+        return ratio >= 100
+            ? ratio.ToString("F0", CultureInfo.InvariantCulture) + "x"
+            : ratio.ToString("F2", CultureInfo.InvariantCulture) + "x";
+    }
     /// <remarks>
     /// <para>
     /// Emitted only when judgments exist, because significance against the oracle-fidelity metric

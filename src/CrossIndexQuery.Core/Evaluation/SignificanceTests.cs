@@ -126,6 +126,142 @@ public static class SignificanceTests
     }
 
     /// <summary>
+    /// Smallest true effect this query set could reliably detect.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The answer to "is 100 queries enough", asked before looking at whether any particular
+    /// comparison reached significance. A non-significant result means one of two very different
+    /// things — the effect is absent, or the experiment was too small to see it — and only a
+    /// minimum detectable effect distinguishes them. Reporting it is what turns "no significant
+    /// difference" into the much stronger "no difference larger than X".
+    /// </para>
+    /// <para>
+    /// Computed from the observed standard deviation of the paired differences, which is the
+    /// quantity that actually governs sensitivity in a paired design. Per-query nDCG varies
+    /// enormously across queries; per-query <em>differences</em> between two strategies vary far
+    /// less, and it is the latter that sets the detection floor.
+    /// </para>
+    /// <para>
+    /// This is a prospective calculation, not post-hoc power. Post-hoc power computed from the
+    /// observed effect is a known statistical error — it is a monotone restatement of the p-value
+    /// and carries no additional information. The number here depends only on the variance and the
+    /// sample size, not on the effect that happened to be observed.
+    /// </para>
+    /// </remarks>
+    /// <param name="differenceStandardDeviation">
+    /// Standard deviation of the per-query differences, from a comparison already run.
+    /// </param>
+    /// <param name="queries">Number of paired queries.</param>
+    /// <param name="power">Probability of detecting a true effect of the returned size.</param>
+    /// <param name="alpha">Two-tailed significance level.</param>
+    public static double MinimumDetectableEffect(
+        double differenceStandardDeviation,
+        int queries,
+        double power = 0.80,
+        double alpha = 0.05)
+    {
+        if (queries < 2 || differenceStandardDeviation <= 0)
+        {
+            return 0.0;
+        }
+
+        // Normal approximation. At n = 100 the t and normal quantiles agree to about two decimal
+        // places, far inside the precision at which an MDE is worth quoting.
+        double zAlpha = NormalQuantile(1 - (alpha / 2));
+        double zBeta = NormalQuantile(power);
+
+        return (zAlpha + zBeta) * differenceStandardDeviation / Math.Sqrt(queries);
+    }
+
+    /// <summary>
+    /// Standard deviation of the paired differences between two arms.
+    /// </summary>
+    public static double DifferenceStandardDeviation(
+        IReadOnlyList<double> baseline,
+        IReadOnlyList<double> candidate)
+    {
+        ArgumentNullException.ThrowIfNull(baseline);
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        if (baseline.Count != candidate.Count || baseline.Count < 2)
+        {
+            return 0.0;
+        }
+
+        double[] differences = new double[baseline.Count];
+        for (int i = 0; i < baseline.Count; i++)
+        {
+            differences[i] = candidate[i] - baseline[i];
+        }
+
+        double mean = differences.Average();
+
+        return Math.Sqrt(differences.Sum(d => (d - mean) * (d - mean)) / (differences.Length - 1));
+    }
+
+    /// <summary>
+    /// Inverse standard normal CDF, by the Acklam rational approximation.
+    /// </summary>
+    /// <remarks>
+    /// Relative error below 1.15e-9 across the whole domain, which is far tighter than anything
+    /// this study reports.
+    /// </remarks>
+    private static double NormalQuantile(double p)
+    {
+        if (p is <= 0 or >= 1)
+        {
+            return 0.0;
+        }
+
+        double[] a =
+        [
+            -3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+            1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00,
+        ];
+        double[] b =
+        [
+            -5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+            6.680131188771972e+01, -1.328068155288572e+01,
+        ];
+        double[] c =
+        [
+            -7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+            -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00,
+        ];
+        double[] d =
+        [
+            7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+            3.754408661907416e+00,
+        ];
+
+        const double PLow = 0.02425;
+        const double PHigh = 1 - PLow;
+
+        double q, r;
+
+        if (p < PLow)
+        {
+            q = Math.Sqrt(-2 * Math.Log(p));
+            return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+                / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+        }
+
+        if (p > PHigh)
+        {
+            q = Math.Sqrt(-2 * Math.Log(1 - p));
+            return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+                / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+        }
+
+        q = p - 0.5;
+        r = q * q;
+
+        return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q
+            / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+    }
+
+    /// <summary>
     /// Applies the Holm step-down correction to a family of p-values.
     /// </summary>
     /// <remarks>

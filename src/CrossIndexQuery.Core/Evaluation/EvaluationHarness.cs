@@ -348,9 +348,13 @@ public sealed class EvaluationHarness(
             ComputeUnits = strategy.PerformsOwnRetrieval
                 ? scope.TotalComputeUnits ?? 0d
                 : stripes.ComputeUnits + (scope.TotalComputeUnits ?? 0d),
-            ModelTokens = strategy is AgenticRetrievalFusion tokenSource
-                ? tokenSource.LastReasoningTokens
-                : null,
+            ModelTokens = strategy switch
+            {
+                AgenticRetrievalFusion agentic =>
+                    agentic.LastReasoningTokens + agentic.LastPlanningTokens,
+                ExternalRerankFusion external => external.LastModelTokens,
+                _ => null,
+            },
             LatencyMs = strategy.PerformsOwnRetrieval
                 ? fusionTime.TotalMilliseconds
                 : stripes.Elapsed.TotalMilliseconds + fusionTime.TotalMilliseconds,

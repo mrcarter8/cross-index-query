@@ -411,6 +411,34 @@ magnitude more than anything splitting does to you in either direction. It impro
 by just as much, so it's never an argument *for* splitting. If relevance is your problem, that's
 where the leverage is.
 
+### The whole tradeoff on one line each
+
+Relative to a single index. Quality is judged nDCG@10; cost is dollars per 1,000 queries at
+published Azure rates; latency is measured p50.
+
+| What you do | Quality | Cost | Latency |
+| --- | ---: | ---: | ---: |
+| **Single index** | 1.00× | 1.0× | 1.0× |
+| Split + **corrected scores** | **1.02×** | **1.5×** | **0.94×** |
+| Split + naive scores | 0.97× | 1.5× | 0.94× |
+| Split + rank fusion (RRF) | 0.86× | 1.5× | 0.94× |
+| Split + built-in reranker | **1.00×** | 2.0× | **0.97×** |
+| Split + agentic retrieval | 1.08× | 8.5× | 11.7× |
+| Split + LLM query planning | 1.01× | 20× | 25× |
+| Split + self-hosted reranker | 1.07× | 13.1× | **122×** |
+
+Three separate stories that don't point the same way:
+
+- **Quality** spans 0.86× to 1.08×, and the negative half is entirely avoidable by choosing a
+  different merge.
+- **Cost has a hard floor of 1.5×** that nothing avoids — two indexes means two queries. Every
+  increment above that floor is buying a model, not fixing the split.
+- **Latency is free until it isn't.** Splitting alone is *faster*, because the fan-out is concurrent
+  and each index is half the size. Adding a model costs one to two orders of magnitude.
+
+Full tables, confidence intervals, controls and threats to validity are in
+**[the report](docs/report.md)**.
+
 ---
 
 ## Part 5 — What this does and doesn't answer

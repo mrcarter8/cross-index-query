@@ -184,6 +184,19 @@ public sealed class FusionStrategyRegistry
         strategies.Add(new AgenticRetrievalFusion(
             options, AgenticResultsProcessing.None, AgenticRetrievalFusion.MinimumOutputDocuments));
 
+        // The only strategy in the catalog that changes what gets retrieved rather than how
+        // retrieved results are ordered. Registered only when a model is attached, because the
+        // service rejects anything above minimal reasoning effort without one — and a row that
+        // fails on every query is worse than an absent row.
+        if (options.Foundry.HasQueryPlanningModel)
+        {
+            strategies.Add(new AgenticRetrievalFusion(
+                options,
+                AgenticResultsProcessing.Rerank,
+                AgenticRetrievalFusion.MinimumOutputDocuments,
+                AgenticReasoningEffort.Low));
+        }
+
         return new FusionStrategyRegistry(strategies);
     }
 }

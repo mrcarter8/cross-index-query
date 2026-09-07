@@ -56,6 +56,26 @@ public sealed class ExternalRerankFusion : IFusionStrategy
     private readonly int _maxCandidates;
     private readonly int _maxConcurrency;
 
+    /// <summary>
+    /// Tokens consumed grading the candidates for the current query.
+    /// </summary>
+    /// <remarks>
+    /// Written from several concurrent grading tasks, so every update goes through
+    /// <see cref="Interlocked"/>. A plain increment would lose counts under the concurrency this
+    /// strategy runs at, and would do so silently and in the direction that flatters it.
+    /// </remarks>
+    private long _tokens;
+
+    /// <summary>
+    /// Model tokens the most recent call consumed.
+    /// </summary>
+    /// <remarks>
+    /// This strategy issues one model call per candidate document, so its token count is roughly
+    /// the candidate budget multiplied by the size of a document. It is the dominant term in its
+    /// cost and reporting it is what makes the comparison against the built-in ranker honest.
+    /// </remarks>
+    public int LastModelTokens => (int)Interlocked.Read(ref _tokens);
+
     public ExternalRerankFusion(CrossIndexOptions options, int maxCandidates = 50, int maxConcurrency = 8)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -90,6 +110,9 @@ public sealed class ExternalRerankFusion : IFusionStrategy
     {
         ArgumentNullException.ThrowIfNull(fanOut);
         ArgumentNullException.ThrowIfNull(context);
+
+        // Reset per query, so the harness records what this query cost rather than a running total.
+        Interlocked.Exchange(ref _tokens, 0);
 
         // Interleaved by rank so that truncating the pool takes the strongest candidates from every
         // stripe rather than exhausting one before reaching the next. Taking them in fan-out order
@@ -210,6 +233,15 @@ public sealed class ExternalRerankFusion : IFusionStrategy
                     [new SystemChatMessage(SystemPrompt), new UserChatMessage(user)],
                     new ChatCompletionOptions(),
                     cancellationToken).ConfigureAwait(false);
+
+                // Counted per call, because this strategy makes one call per candidate document and
+                // its whole cost profile is that multiplication. Reporting it with an empty token
+                // column would put it beside strategies that genuinely consume none, and understate
+                // it by its entire model bill.
+                if (result.Value.Usage is { } usage)
+                {
+                    Interlocked.Add(ref _tokens, usage.InputTokenCount + usage.OutputTokenCount);
+                }
 
                 string text = result.Value.Content.Count > 0 ? result.Value.Content[0].Text : string.Empty;
                 return TryParseGrade(text, out int grade) ? grade : -1;

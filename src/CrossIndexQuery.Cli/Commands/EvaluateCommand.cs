@@ -159,6 +159,7 @@ public sealed class EvaluateCommand(CrossIndexOptions options)
             markdownPath,
             records,
             serviceDescription,
+            semantic,
             cancellationToken).ConfigureAwait(false);
 
         Console.WriteLine();

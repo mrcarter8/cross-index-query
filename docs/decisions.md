@@ -731,3 +731,86 @@ looked complete and was not.
 It now throws `HttpRequestException`, which propagates. The bug hid a real constraint
 (`maxOutputDocuments` has a floor of 50) for an entire evaluation run. Exception types that a
 caller uses for control flow must not be reused for failures.
+
+## The final report: three axes, not one
+
+**2026-09-06.** The deliverable was restructured around quality, cost and latency together rather
+than relevance alone. The reason is a failure mode the earlier drafts had: a technique that recovers
+the relevance loss by calling a reranker on every query has not made splitting free, it has moved
+the cost to a meter the report was not showing. Putting all three axes on one row is what stops that
+trade from being invisible.
+
+Cost is now computed from published rates rather than described qualitatively: **$0.27 per
+compute-unit hour** and **$1.00 per 1K semantic ranker queries**, both read from the Azure retail
+prices API for `centralus`, plus a stated per-token assumption for model usage. Compute units come
+from the service's own response header and model tokens from its activity records, so only the token
+*price* is an assumption; the token *counts* are measured.
+
+The order-of-magnitude result, relative to a single index:
+
+| | Quality | Cost | Latency |
+| --- | ---: | ---: | ---: |
+| Split + corrected scores | 1.02x | **1.5x** | **0.94x** |
+| Split + built-in reranker | 1.00x | 2.0x | 0.97x |
+| Split + agentic retrieval | 1.08x | 8.5x | 11.7x |
+| Split + self-hosted reranker | 1.07x | 13.1x | **122x** |
+
+Cost has a hard floor of 1.5x that no technique avoids, because two indexes means two queries.
+Latency is *below* 1.0x for query-only merging, because fan-out is concurrent and each index is half
+the size — a finding that only became visible once latency was reported as its own axis.
+
+## external-rerank was being reported at a seventh of its real cost
+
+**Found 2026-09-06.** The report was about to publish `external-rerank` at $2.21 per 1,000 queries
+with an empty token column. That figure counted its search compute and ignored its entire model
+bill. The strategy issues one chat call per candidate document — the defining property of the
+pattern — and none of those tokens were being counted.
+
+Measured: **30,906 tokens per query**, which puts its real cost at **$14.58 per 1,000 queries**,
+about seven times what was about to be printed. That single correction changes its verdict
+completely. At the published figure it looked like a mid-priced option; at the measured figure it is
+**Pareto-dominated** by agentic retrieval, which beats it on quality, on cost, and on latency by
+10x simultaneously.
+
+The general lesson matches the `global-bm25` confound: a cost column that reports one meter and
+silently omits another is not a partial measurement, it is a wrong one, and it is wrong in the
+direction that flatters whichever strategy the omission favours.
+
+## Judgment holes never fully close for a strategy that retrieves more broadly
+
+**2026-09-06.** `agentic-planned` decomposes one query into several subqueries and runs each against
+both stripes — six searches where every other strategy issues two. By construction it surfaces
+documents nothing else in the pool has seen, so every round of judging closes part of its hole and
+reveals more of it: 78% coverage, then 88%, then 85%, then 87% across four rounds, with its score
+moving 0.676 → 0.728 → 0.711 → 0.726 as the pool grew.
+
+This is the BEIR Hole@k problem in its purest form and it does not have a clean fix at this budget.
+The honest treatment, and the one adopted, is to report the hole rate per arm and state that the
+strategy's number is a **lower bound** rather than an estimate. It is the one row in the report a
+reader should distrust in the direction of being too low.
+
+The reporting rule this establishes: no comparison is drawn between arms at materially different
+Hole@10, and the hole rate is a published column rather than a footnote.
+
+## Report structure follows IR evaluation convention
+
+**2026-09-06.** The report was restructured against published conventions rather than invented ones,
+after researching what makes an evaluation credible to an IR specialist. The changes that mattered:
+
+- **Hole@k as a named, per-arm column**, following BEIR's protocol for exactly this failure. The
+  study had been measuring it as "coverage" without connecting it to the established term or its
+  literature.
+- **A named section for falsifying experiments** rather than ablations scattered through the
+  results. A skeptical reader who sees that heading in the contents recalibrates before reading a
+  single number, and this study has four such experiments including one that succeeded.
+- **A scope-of-claim section before the results, and a what-we-did-not-measure section after.**
+  These are the two sections most likely to be skipped by an author and read first by a skeptic.
+- **Minimum detectable effect stated prospectively** — approximately 0.014 nDCG at 80% power for
+  n=100. Without it, "no significant difference" is ambiguous between "no effect" and "underpowered
+  experiment". Post-hoc power computed from the observed effect is deliberately not reported; it is
+  a monotone restatement of the p-value and carries no information.
+- **No radar charts.** They are widely considered unreadable for multi-unit comparison, and the
+  quality/cost/latency tradeoff is exactly the multi-unit case they handle worst. A quadrant
+  positioning chart and normalized multiples are used instead.
+- **Held-constant list stated explicitly**, because "we changed one thing" is a claim that has to be
+  auditable rather than asserted.
