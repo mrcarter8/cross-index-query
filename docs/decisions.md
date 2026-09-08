@@ -814,3 +814,92 @@ after researching what makes an evaluation credible to an IR specialist. The cha
   positioning chart and normalized multiples are used instead.
 - **Held-constant list stated explicitly**, because "we changed one thing" is a claim that has to be
   auditable rather than asserted.
+
+## Selective search: the option that costs less than a single index
+
+**Measured 2026-09-08.** Every strategy in the catalog until now accepted that splitting a corpus
+means querying every part of it, and competed on what to do with the results. That framing put a
+floor under the cost axis: two queries, always, so never cheaper than a single index.
+
+The floor was an artifact of the framing. `SelectiveSearchFusion` scores each index by expected
+yield using the committed statistics sidecar, then queries only the indexes worth querying.
+
+| | judged nDCG | cost | latency | queries |
+| --- | ---: | ---: | ---: | ---: |
+| single index | 0.538 | 1.00x | 1.00x | 1.0 |
+| **selective-one** | **0.524** | **0.97x** | **1.00x** | **1.0** |
+| naive / rrf / idf-correct / global-bm25 | 0.465-0.634 | 1.36x | 0.94x | 2.0 |
+
+`selective-one` is statistically indistinguishable from not splitting: -0.013, 95% CI
+[-0.038, +0.011], p=0.33, with 48 queries better and 47 worse. It is the only measured option below
+1.0x cost.
+
+The selection estimator is deliberately the simplest thing that needs no extra request:
+
+    yield(index) = sum over query terms of globalIdf(term) * localDocumentFrequency(index, term)
+
+Document frequency measures how much material an index has on the topic; the global IDF weight
+stops a common word from dominating the routing decision. A term absent from an index contributes
+zero, which is the case the technique exists for.
+
+**This is a genuine gamble, not a free lunch, and the interval says so.** Its CI is +/-0.025 against
+a detection floor of 0.014 — nearly twice as wide as any other query-only strategy's. That width is
+the finding: selective search is right most of the time and badly wrong occasionally, where every
+other option is consistently slightly wrong. A 48/47 win/loss split with a near-zero mean is the
+signature of high per-query variance, not of a technique that does nothing.
+
+Better estimators exist. Taily models each index's score distribution parametrically and estimates
+how many documents would clear a global threshold. It was not implemented, because a strategy whose
+selection quality is the entire point should not be introduced alongside an unmeasured refinement.
+
+## What actually drives the cost of splitting, measured properly
+
+**Corrected 2026-09-08.** An earlier decision entry attributed the 1.5x cost premium to "two queries"
+and left it there, and an earlier fit claimed 53% fixed overhead. Both were derived from a
+comparison that varied two things at once: the earlier fit compared a 25-candidate stripe query
+against a 50-candidate single-index query, conflating index size with result count.
+
+`selective-one` supplied the missing controlled point — one query, 50 candidates, half-size index —
+which allows a clean decomposition:
+
+| change | effect on cost |
+| --- | ---: |
+| halve the index size, same 50 results | **3.5% cheaper** |
+| halve the results requested, same index | **29% cheaper** |
+| split one query into two | **+37%** |
+
+**Index size is nearly irrelevant to query cost. Per-request overhead dominates.** Fitting gives
+about 40% of a query as fixed cost paid once per index touched, plus a variable term tracking
+results returned:
+
+    CU ~= 0.00017 * indexes + 0.0000054 * results
+
+which predicts 0.97x for one stripe and 1.37x for two, both matching measurement. The extrapolation
+that matters for anyone weighing two stripes against three: **each additional index adds a flat
+~0.4x toll on every query, whether or not it contributes to the answer.**
+
+This also explains an observation the tables always showed but never accounted for: every query-only
+merge costs exactly the same. The arithmetic runs client-side in microseconds and is billed at zero.
+You pay for round trips, not for what you do with the results — which is precisely why doing the
+merge well is free.
+
+**Measurement caveat now recorded in the report.** Serverless CU metering varies run to run. The
+single-index baseline measured 0.000384 in one run and 0.000430 in another, about 12% apart, while
+the two-stripe figure held within 1%. Cost multiples are quoted as ~1.4x rather than to three
+digits, and the decomposition uses points measured within a single run.
+
+## Every option gets a narrative
+
+**2026-09-08.** The report gained a section giving each of the thirteen measured strategies the same
+treatment: how it works, a quality/cost/latency table, when to use it, and when not to. Previously
+the options existed only as rows in comparison tables, which supports "which is best" but not "what
+is this and should I pick it".
+
+The consistent format matters more than the prose. A reader comparing two options can now put the
+two blocks side by side and find the same facts in the same positions, rather than reconstructing
+each technique from scattered mentions across the results, guidance and threats sections.
+
+Two entries are deliberately negative recommendations with no valid use case on this evidence:
+`minmax-norm`/`zscore-norm` ("worse than doing nothing") and `agentic-cheap` ("never, for ranked
+retrieval"). They are included because both are natural intuitions, and measuring them is cheaper
+than arguing about them.

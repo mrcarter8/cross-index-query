@@ -158,6 +158,17 @@ public sealed class FusionStrategyRegistry
             // The control that makes the previous line falsifiable: identical arithmetic and
             // identical tokenization, differing only in whose statistics are used.
             strategies.Add(new LocalBm25Fusion(statistics));
+
+            // The only strategies here that can land below the single index on cost, because they
+            // are the only ones that decline to query an index at all. The same sidecar again, used
+            // a third way: to decide where to look rather than how to score what came back.
+            var retriever = new MultiStripeRetriever(new StripeRetriever(factory), options);
+
+            strategies.Add(new SelectiveSearchFusion(
+                retriever, statistics, options, threshold: 1.0, name: "selective-one"));
+
+            strategies.Add(new SelectiveSearchFusion(
+                retriever, statistics, options, threshold: 0.35, name: "selective-adaptive"));
         }
 
         // Pattern 2: a model outside the search service scores every candidate. Registered last

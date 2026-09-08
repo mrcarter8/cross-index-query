@@ -418,11 +418,12 @@ published Azure rates; latency is measured p50.
 
 | What you do | Quality | Cost | Latency |
 | --- | ---: | ---: | ---: |
-| **Single index** | 1.00× | 1.0× | 1.0× |
-| Split + **corrected scores** | **1.02×** | **1.5×** | **0.94×** |
-| Split + naive scores | 0.97× | 1.5× | 0.94× |
-| Split + rank fusion (RRF) | 0.86× | 1.5× | 0.94× |
-| Split + built-in reranker | **1.00×** | 2.0× | **0.97×** |
+| **Single index** | 1.00× | 1.00× | 1.00× |
+| **Split + select one index** | **0.98×** | **0.97×** | **1.00×** |
+| Split + **corrected scores** | **1.02×** | 1.4× | **0.94×** |
+| Split + naive scores | 0.97× | 1.4× | 0.94× |
+| Split + rank fusion (RRF) | 0.86× | 1.4× | 0.94× |
+| Split + built-in reranker | **1.00×** | 2.0× | **0.96×** |
 | Split + agentic retrieval | 1.08× | 8.5× | 11.7× |
 | Split + LLM query planning | 1.01× | 20× | 25× |
 | Split + self-hosted reranker | 1.07× | 13.1× | **122×** |
@@ -431,13 +432,19 @@ Three separate stories that don't point the same way:
 
 - **Quality** spans 0.86× to 1.08×, and the negative half is entirely avoidable by choosing a
   different merge.
-- **Cost has a hard floor of 1.5×** that nothing avoids — two indexes means two queries. Every
-  increment above that floor is buying a model, not fixing the split.
+- **Cost is ~1.4× if you query both indexes.** The driver is per-request overhead, not data volume —
+  halving the index saves only 3.5% of a query, so each extra index costs a flat ~0.4× toll.
 - **Latency is free until it isn't.** Splitting alone is *faster*, because the fan-out is concurrent
   and each index is half the size. Adding a model costs one to two orders of magnitude.
 
-Full tables, confidence intervals, controls and threats to validity are in
-**[the report](docs/report.md)**.
+**The surprise:** you can land *below* a single index on cost. Use the same statistics file to decide
+which index is worth querying, query only that one, and you get **0.97× cost, 1.00× latency, and
+relevance statistically indistinguishable from not splitting at all** (p = 0.33). It's a per-query
+gamble rather than a free lunch — skip the wrong index and the answer is gone — but on a topical
+split it's the cheapest option in the study.
+
+Full tables, a narrative for every option, confidence intervals, controls and threats to validity are
+in **[the report](docs/report.md)**.
 
 ---
 
