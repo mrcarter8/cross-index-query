@@ -903,3 +903,75 @@ Two entries are deliberately negative recommendations with no valid use case on 
 `minmax-norm`/`zscore-norm` ("worse than doing nothing") and `agentic-cheap` ("never, for ranked
 retrieval"). They are included because both are natural intuitions, and measuring them is cheaper
 than arguing about them.
+
+## Cost is two different questions, and the report was only answering one
+
+**Corrected 2026-09-09.** Every cost figure in the study was computed by converting compute units at
+the serverless rate. That is right for serverless and wrong for every provisioned tier, and the
+report was presenting it as though it were the answer for both.
+
+On Basic, S1-S3, L1-L2 you buy search units by the hour. They cost the same idle or saturated, so
+the marginal dollar cost of one more query is **zero** until the service runs out of headroom, at
+which point it is the discrete price of another replica. Telling that reader "fanning out to two
+indexes costs 1.4x more" is false. For them it costs no money at all and instead consumes 1.4x of
+capacity they already bought.
+
+The model now reports two quantities measured separately and read separately:
+
+  Metered cost   consumption meters that bill on every tier - the semantic ranker, the
+                 agentic retrieval meter, and model tokens spent outside the search service
+  Capacity       compute units relative to baseline; dollars on serverless, throughput
+                 headroom on a provisioned tier (1.4x compute leaves ~71% of peak QPS)
+
+Both come from the same measurements. Only the translation into consequences differs, which is why
+the harness records meters and compute units rather than dollars.
+
+What this changes in the guidance:
+
+- In the query-only tier **no consumption meter is touched at all**. On a provisioned tier every
+  client-side merge - naive, RRF, IDF-corrected, global BM25 - is free in the literal sense. The
+  entire choice is quality against compute headroom.
+- The one dollar cost of splitting that no client-side technique avoids is the **semantic ranker**,
+  which bills per query rather than per document, so a two-index fan-out pays it twice. $1.00 per
+  1,000 user queries, on any tier, forever.
+- Latency and throughput move in opposite directions and both are now reported. Each query is
+  *faster* (0.94x) because fan-out is concurrent, while the service does ~1.4x the total work.
+  Reporting only latency made splitting look strictly better on the time axis than it is.
+
+## The agentic token price was assumed, and the assumption was 18x wrong
+
+**Corrected 2026-09-09.** Agentic retrieval reasoning tokens were priced at $0.40 per million by
+analogy with a small chat model. Azure AI Search bills them on its own meter - `Agentic Retrieval
+Minimum/Low Reasoning Tokens` - at $0.000022 per 1K, which is **$0.022 per million**.
+
+  agentic-rerank    reported $9.40/1K   ->  measured $2.41/1K
+  agentic-planned   reported $22.37/1K  ->  measured $6.32/1K
+
+The consequence was not cosmetic. At the assumed rate agentic retrieval read as an expensive option
+bought only for its quality; at the real rate it costs about the same as the built-in semantic
+ranker, which makes +0.062 nDCG a straightforwardly good trade. The recommendation changed because
+the number changed.
+
+The failure was not arithmetic. It was reaching for an analogy when a published figure existed, and
+then not labelling the result as an assumption in the one place a reader would check - it sat in a
+table looking exactly like the rates that had been fetched. This is the same shape as the
+global-bm25 confound: a number that looked like a measurement and was not.
+
+The medium-effort meter is priced separately at $0.10 per million, about 4.5x the low and minimum
+rate. Only minimum and low are measured here.
+
+One rate remains an assumption and is now labelled everywhere it appears: $0.40 per million for
+tokens sent to a model deployment the caller owns, which affects external-rerank and the planning
+portion of agentic-planned. The retail prices API does not expose per-token rates for those
+deployments in a form this project can fetch.
+
+## Two token meters cannot share a column
+
+**2026-09-09.** EvaluationRecord carried one ModelTokens field summing agentic reasoning tokens and
+Foundry chat tokens. Those bill on different meters roughly eighteen times apart, so their sum is
+not a price of anything. Split into AgenticTokens (search meter) and ModelTokens (Foundry), reported
+as separate columns in both the CSV and the markdown.
+
+The split also revealed how little of agentic-planned's token consumption is actually query
+planning: 1,144 Foundry tokens against 41,296 on the search meter. The expensive part is the
+reasoning, not the rewriting.

@@ -416,33 +416,39 @@ where the leverage is.
 Relative to a single index. Quality is judged nDCG@10; cost is dollars per 1,000 queries at
 published Azure rates; latency is measured p50.
 
-| What you do | Quality | Cost | Latency |
-| --- | ---: | ---: | ---: |
-| **Single index** | 1.00× | 1.00× | 1.00× |
-| **Split + select one index** | **0.98×** | **0.97×** | **1.00×** |
-| Split + **corrected scores** | **1.02×** | 1.4× | **0.94×** |
-| Split + naive scores | 0.97× | 1.4× | 0.94× |
-| Split + rank fusion (RRF) | 0.86× | 1.4× | 0.94× |
-| Split + built-in reranker | **1.00×** | 2.0× | **0.96×** |
-| Split + agentic retrieval | 1.08× | 8.5× | 11.7× |
-| Split + LLM query planning | 1.01× | 20× | 25× |
-| Split + self-hosted reranker | 1.07× | 13.1× | **122×** |
+| What you do | Quality | Metered $ | Serverless $ | Capacity |
+| --- | ---: | ---: | ---: | ---: |
+| **Single index** | 1.00× | 1.00× | 1.00× | 1.00× |
+| **Split + select one index** | 0.98× | **same** | **0.97×** | **0.97×** |
+| Split + **corrected scores** | **1.02×** | **same** | 1.4× | 1.36× |
+| Split + naive scores | 0.97× | **same** | 1.4× | 1.36× |
+| Split + rank fusion (RRF) | 0.86× | **same** | 1.4× | 1.36× |
+| Split + built-in reranker | 1.00× | 2.0× | 2.0× | 1.66× |
+| Split + agentic retrieval | 1.09× | 2.4× | 2.4× | — |
+| Split + LLM query planning | 1.00× | 6.3× | 6.3× | — |
+| Split + self-hosted reranker | 1.08× | **14.4×** | 12.9× | 1.66× |
+
+**Cost depends on how you pay for search, and the answer is different enough to matter.** On a
+**provisioned tier** (Basic, S1–S3) you buy search units by the hour, so an extra query adds
+*nothing* to the invoice — every query-only merge above is literally free, and what splitting spends
+is throughput headroom. On **serverless**, compute is metered per query and the same work costs
+~1.4×. The one charge that lands on every tier is the semantic ranker: it bills per query, so a
+two-index fan-out pays it twice.
 
 Three separate stories that don't point the same way:
 
-- **Quality** spans 0.86× to 1.08×, and the negative half is entirely avoidable by choosing a
+- **Quality** spans 0.86× to 1.09×, and the negative half is entirely avoidable by choosing a
   different merge.
-- **Cost is ~1.4× if you query both indexes.** The driver is per-request overhead, not data volume —
-  halving the index saves only 3.5% of a query, so each extra index costs a flat ~0.4× toll.
-- **Latency is free until it isn't.** Splitting alone is *faster*, because the fan-out is concurrent
-  and each index is half the size. Adding a model costs one to two orders of magnitude.
+- **Cost** is $0 extra on a provisioned tier for client-side merging, ~1.4× on serverless, and
+  +$1.00 per 1,000 queries at the semantic tier on either.
+- **Time** cuts both ways: each query is *faster* (0.94× latency, the fan-out is concurrent) while
+  the service does ~1.4× the work, leaving ~74% of peak throughput.
 
-**The surprise:** you can land *below* a single index on cost. Use the same statistics file to decide
-which index is worth querying, query only that one, and you get **0.97× cost, 1.00× latency, and
-relevance statistically indistinguishable from not splitting at all** (p = 0.33). It's a per-query
-gamble rather than a free lunch — skip the wrong index and the answer is gone — but on a topical
-split it's the cheapest option in the study.
-
+**The surprise:** you can land *below* a single index on compute. Use the same statistics file to
+decide which index is worth querying, query only that one, and you get **0.97× compute, same
+latency, and relevance statistically indistinguishable from not splitting at all** (p = 0.33). It's
+a per-query gamble rather than a free lunch — skip the wrong index and the answer is gone — but on a
+topical split it's the cheapest option in the study.
 Full tables, a narrative for every option, confidence intervals, controls and threats to validity are
 in **[the report](docs/report.md)**.
 

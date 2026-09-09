@@ -38,15 +38,26 @@ public sealed record EvaluationRecord
     public required double ComputeUnits { get; init; }
 
     /// <summary>
-    /// Model tokens the service consumed on this query, when the strategy reports them.
+    /// Reasoning tokens billed by Azure AI Search's own agentic retrieval meter.
     /// </summary>
     /// <remarks>
-    /// Null for every strategy that consumes no model tokens, and deliberately not folded into
-    /// <see cref="ComputeUnits"/>. Reranking tokens and search compute units are separate meters
-    /// with separate prices; adding them would produce a number that is not a cost of anything.
-    /// Null rather than zero for the same reason judged relevance is null when unjudged — zero is a
-    /// claim that no tokens were used, which is only true for some of the strategies that report
-    /// nothing here.
+    /// Kept apart from <see cref="ModelTokens"/> because the two bill on different meters at rates
+    /// roughly eighteen times apart — $0.022 per million here against a small-model rate of about
+    /// $0.40 per million for a deployment you own. Summing them would produce a number that is not
+    /// a price of anything.
+    /// </remarks>
+    public int? AgenticTokens { get; init; }
+
+    /// <summary>
+    /// Model tokens billed outside the search service, when the strategy reports them.
+    /// </summary>
+    /// <remarks>
+    /// Work sent to a model deployment the caller owns — the external reranker, or the
+    /// query-planning model attached to a knowledge base. Null for every strategy that sends none,
+    /// and deliberately not folded into <see cref="ComputeUnits"/>: they are separate meters with
+    /// separate prices, and adding them would produce a number that is not a cost of anything. Null
+    /// rather than zero for the same reason judged relevance is null when unjudged — zero is a
+    /// claim that the meter ran and charged nothing.
     /// </remarks>
     public int? ModelTokens { get; init; }
 
@@ -100,7 +111,8 @@ public sealed record StrategySummary(
     double LatencyP95Ms,
     double? JudgedNdcg = null,
     double? JudgedCoverage = null,
-    double? ModelTokens = null)
+    double? ModelTokens = null,
+    double? AgenticTokens = null)
 {
     public static StrategySummary Aggregate(string mode, string strategy, IReadOnlyList<EvaluationRecord> records)
     {
@@ -137,6 +149,10 @@ public sealed record StrategySummary(
             // none stays null rather than dragging a shared average toward zero.
             ModelTokens: records.Any(r => r.ModelTokens is not null)
                 ? records.Where(r => r.ModelTokens is not null).Average(r => (double)r.ModelTokens!.Value)
+                : null,
+
+            AgenticTokens: records.Any(r => r.AgenticTokens is not null)
+                ? records.Where(r => r.AgenticTokens is not null).Average(r => (double)r.AgenticTokens!.Value)
                 : null);
     }
 

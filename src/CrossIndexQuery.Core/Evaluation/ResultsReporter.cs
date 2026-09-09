@@ -27,7 +27,7 @@ public static class ResultsReporter
         var sb = new StringBuilder();
         sb.AppendLine(
             "queryId,query,shape,span,intent,mode,strategy,ndcg,recall,jaccard,kendallTau,rbo,"
-            + "judgedNdcg,judgedCoverage,queries,computeUnits,modelTokens,latencyMs,stripeMix");
+            + "judgedNdcg,judgedCoverage,queries,computeUnits,agenticTokens,modelTokens,latencyMs,stripeMix");
 
         foreach (EvaluationRecord r in records)
         {
@@ -52,8 +52,12 @@ public static class ResultsReporter
               .Append(r.QueryCount.ToString(CultureInfo.InvariantCulture)).Append(',')
               .Append(Num(r.ComputeUnits)).Append(',')
 
-              // Blank rather than 0 when the strategy consumes no model tokens, so a reader cannot
-              // mistake "this meter did not run" for "this meter ran and charged nothing".
+              // Blank rather than 0 when a meter did not run, so a reader cannot mistake "this
+              // meter did not run" for "this meter ran and charged nothing". Two token columns,
+              // because the search service's agentic meter and a model deployment you own are
+              // priced roughly eighteen times apart and cannot share a column.
+              .Append(r.AgenticTokens is { } at ? at.ToString(CultureInfo.InvariantCulture) : string.Empty)
+              .Append(',')
               .Append(r.ModelTokens is { } mt ? mt.ToString(CultureInfo.InvariantCulture) : string.Empty)
               .Append(',')
               .Append(Num(r.LatencyMs)).Append(',')
@@ -101,8 +105,8 @@ public static class ResultsReporter
                     .OrderByDescending(s => s.Ndcg)
             ];
 
-            sb.AppendLine("| Strategy | nDCG@10 | Recall@10 | RBO | Kendall τ | Queries | Compute units | Model tokens | p50 ms | p95 ms |");
-            sb.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+            sb.AppendLine("| Strategy | nDCG@10 | Recall@10 | RBO | Kendall τ | Queries | Compute units | Agentic tokens | Model tokens | p50 ms | p95 ms |");
+            sb.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
 
             foreach (StrategySummary s in summaries)
             {
@@ -115,6 +119,10 @@ public static class ResultsReporter
                   .Append(F4(s.ComputeUnits)).Append(" | ")
 
                   // An em dash where no model meter ran at all, which is not the same claim as zero.
+                  .Append(s.AgenticTokens is { } agentic
+                      ? agentic.ToString("N0", CultureInfo.InvariantCulture)
+                      : "—")
+                  .Append(" | ")
                   .Append(s.ModelTokens is { } tokens
                       ? tokens.ToString("N0", CultureInfo.InvariantCulture)
                       : "—")
@@ -133,21 +141,20 @@ public static class ResultsReporter
     }
 
     /// <summary>
-    /// Reports quality, cost and latency against the single index on one line per strategy.
+    /// Reports quality, cost and capacity against the single index on one line per strategy.
     /// </summary>
     /// <remarks>
     /// <para>
     /// The table the whole study exists to produce. Quality alone cannot answer "should I split",
     /// because a technique that recovers the relevance loss by paying for a reranker on every query
-    /// has not made splitting free — it has moved the cost to a different meter. Putting all three
-    /// axes on one row is what stops that trade from being invisible.
+    /// has not made splitting free — it has moved the cost to a different meter. Putting the axes
+    /// on one row is what stops that trade from being invisible.
     /// </para>
     /// <para>
-    /// Everything is expressed as a multiple of the single index rather than in absolute units.
-    /// Absolute figures are in the columns beside them for anyone who wants them, but the multiple
-    /// is what survives a change of corpus, tier or region — and it is the form in which the
-    /// answer is actually useful: "this costs 70x more and returns 4% better" is a decision, where
-    /// "$7.40 per thousand queries" is a number needing a second number to interpret.
+    /// Cost is reported twice, because the same measurement means different things under the two
+    /// pricing models. Metered dollars bill on every tier. Compute bills only on serverless; on a
+    /// provisioned tier the same consumption shows up as throughput headroom rather than as money,
+    /// so it is reported as a capacity multiple beside the dollars rather than folded into them.
     /// </para>
     /// </remarks>
     private static void AppendTradeoff(
@@ -171,58 +178,80 @@ public static class ResultsReporter
 
         CostModel model = CostModel.Default;
 
-        double Cost(StrategySummary s) => model.PerThousandQueries(
-            s.ComputeUnits,
+        // Every request in a semantic run invokes the ranker, so ranker invocations equal requests.
+        // A strategy that fans out to two indexes therefore pays the ranker twice for one user
+        // query — a real dollar cost of splitting on any tier, and one no client-side merge avoids.
+        int Rankers(StrategySummary s) =>
+            semanticRanker ? (int)Math.Round(s.QueriesPerRequest) : 0;
 
-            // Every request in a semantic run invokes the ranker, so the number of ranker
-            // invocations is the number of requests. A strategy that fans out to two indexes
-            // therefore pays the ranker twice for one user query, which is a real cost of splitting
-            // and one that no client-side merge can avoid.
-            semanticRanker ? (int)Math.Round(s.QueriesPerRequest) : 0,
+        double Metered(StrategySummary s) => model.MeteredDollarsPerThousandQueries(
+            Rankers(s),
+            (int)Math.Round(s.AgenticTokens ?? 0),
             (int)Math.Round(s.ModelTokens ?? 0));
 
-        double baselineCost = Cost(baseline);
+        double Serverless(StrategySummary s) => model.TotalDollarsPerThousandQueries(
+            s.ComputeUnits,
+            Rankers(s),
+            (int)Math.Round(s.AgenticTokens ?? 0),
+            (int)Math.Round(s.ModelTokens ?? 0),
+            PricingModel.Serverless);
+
         double baselineQuality = baseline.JudgedNdcg ?? 0;
         double baselineLatency = baseline.LatencyP50Ms;
+        double baselineCompute = baseline.ComputeUnits;
 
-        sb.AppendLine("### Quality, cost and latency").AppendLine();
-        sb.Append("Cost assumes $")
-          .Append(F2(model.DollarsPerComputeUnitHour))
-          .Append(" per compute-unit hour and $")
+        sb.AppendLine("### Quality, cost and capacity").AppendLine();
+        sb.AppendLine(
+            "Cost appears twice because the two pricing models charge differently for the same work.")
+          .Append("**Metered** is consumption billing that applies on every tier — the semantic ranker at $")
           .Append(F2(model.DollarsPerThousandSemanticQueries))
-          .AppendLine(" per 1K semantic ranker queries, both read from the Azure retail")
-          .Append("prices API, plus $")
-          .Append(F2(model.DollarsPerMillionTokens))
-          .AppendLine(" per million model tokens, which is an assumption rather than a")
-          .AppendLine("measurement — substitute your own rate and the token-bearing rows move with it.")
-          .AppendLine();
+          .Append(" per 1K queries and the agentic retrieval meter at $")
+          .Append(model.DollarsPerMillionAgenticTokens.ToString("F3", CultureInfo.InvariantCulture))
+          .AppendLine(" per million tokens, both read from the Azure retail prices API.")
+          .Append("**Serverless** adds compute at $")
+          .Append(F2(model.DollarsPerComputeUnitHour))
+          .AppendLine(" per CU-hour. On a provisioned tier that compute is already")
+          .AppendLine(
+            "bought by the hour, so the marginal query costs nothing extra and the consumption shows")
+          .AppendLine("up in the capacity column instead.").AppendLine();
 
         sb.AppendLine(
-            "| Strategy | Quality | vs single | $/1K queries | vs single | p50 ms | vs single | Tokens/query |");
+            "| Strategy | Quality | vs single | Metered $/1K | Serverless $/1K | Capacity | Peak QPS | p50 ms |");
         sb.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
 
         foreach (StrategySummary s in summaries.OrderByDescending(s => s.JudgedNdcg ?? -1))
         {
-            double cost = Cost(s);
             double quality = s.JudgedNdcg ?? 0;
+            double computeMultiple = baselineCompute > 0 ? s.ComputeUnits / baselineCompute : 0;
+
+            // Agentic strategies retrieve server-side, where the client's compute header cannot see
+            // the work. Reporting 0.00x would claim they consume nothing.
+            bool computeObserved = s.ComputeUnits > 0;
 
             sb.Append("| `").Append(s.Strategy).Append("` | ")
               .Append(F3(quality)).Append(" | ")
               .Append(Multiple(quality, baselineQuality)).Append(" | ")
-              .Append(CostModel.Format(cost)).Append(" | ")
-              .Append(Multiple(cost, baselineCost)).Append(" | ")
-              .Append(F0(s.LatencyP50Ms)).Append(" | ")
-              .Append(Multiple(s.LatencyP50Ms, baselineLatency)).Append(" | ")
-              .Append(s.ModelTokens is { } t ? t.ToString("N0", CultureInfo.InvariantCulture) : "—")
+              .Append(CostModel.Format(Metered(s))).Append(" | ")
+              .Append(CostModel.Format(Serverless(s))).Append(" | ")
+              .Append(computeObserved ? Multiple(s.ComputeUnits, baselineCompute) : "—").Append(" | ")
+              .Append(computeObserved
+                  ? CostModel.RelativeThroughput(computeMultiple).ToString("P0", CultureInfo.InvariantCulture)
+                  : "—")
+              .Append(" | ")
+              .Append(F0(s.LatencyP50Ms))
               .AppendLine(" |");
         }
 
         sb.AppendLine();
         sb.AppendLine(
-            "A multiple below 1.00x in the quality column is relevance lost; above 1.00x in the cost")
+            "`Capacity` is compute consumed per query relative to the single index; `Peak QPS` is the")
           .AppendLine(
-            "or latency columns is what recovering it charged you. Read the three together — a row")
-          .AppendLine("that wins on quality alone has not necessarily won.")
+            "share of the baseline's peak throughput the same hardware retains as a result. On")
+          .AppendLine(
+            "serverless, read the serverless column and ignore capacity. On a provisioned tier, read")
+          .AppendLine(
+            "the metered column and treat capacity as the scaling question — a dash means the work")
+          .AppendLine("happens server-side where the client cannot measure it.")
           .AppendLine();
     }
 

@@ -350,11 +350,18 @@ public sealed class EvaluationHarness(
                 : stripes.ComputeUnits + (scope.TotalComputeUnits ?? 0d),
             ModelTokens = strategy switch
             {
-                AgenticRetrievalFusion agentic =>
-                    agentic.LastReasoningTokens + agentic.LastPlanningTokens,
+                // Query planning goes to a deployment the caller owns, so it bills through Foundry.
+                AgenticRetrievalFusion agentic when agentic.LastPlanningTokens > 0
+                    => agentic.LastPlanningTokens,
                 ExternalRerankFusion external => external.LastModelTokens,
                 _ => null,
             },
+
+            // The search service's own agentic meter, which is priced two orders of magnitude below
+            // a chat deployment and therefore cannot share a column with one.
+            AgenticTokens = strategy is AgenticRetrievalFusion tokenSource
+                ? tokenSource.LastReasoningTokens
+                : null,
             LatencyMs = strategy.PerformsOwnRetrieval
                 ? fusionTime.TotalMilliseconds
                 : stripes.Elapsed.TotalMilliseconds + fusionTime.TotalMilliseconds,
